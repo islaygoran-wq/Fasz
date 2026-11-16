@@ -1,0 +1,1680 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<title>Alsó bölcsességfog műtét – oktatóvideó</title>
+<style>
+  html,body{margin:0;background:#111;}
+  canvas{display:block;width:100vw;height:auto;max-width:1920px;margin:0 auto;}
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+"use strict";
+/* =====================================================================
+   Alsó bölcsességfogak műtéti eltávolítása – animált, feliratozott
+   oktatóvideó. Determinisztikus: renderAt(t) egy képkockát rajzol.
+   ===================================================================== */
+const W = 1920, H = 1080;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const SX = 40, SY = 128, SW = 1220, SH = 762;      // színpad (ábra)
+const PX = 1290, PY = 128, PW = 590, PH = 762;     // kulcspont-panel
+const FONT = 'Inter, "DejaVu Sans", Arial, sans-serif';
+
+/* ---------- segédfüggvények ---------- */
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const P = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+// animáció-progresszió egy felirat időablakán belül
+function A(s, ci, f0 = 0, f1 = 1) {
+  if (ci >= s.n) return s.t >= s.T ? 1 : 0;
+  const st = s.cs[ci], d = s.cd[ci];
+  return ease(clamp((s.t - (st + d * f0)) / Math.max(0.001, d * (f1 - f0))));
+}
+function Al(s, ci, f0 = 0, f1 = 1) { // lineáris
+  if (ci >= s.n) return 0;
+  const st = s.cs[ci], d = s.cd[ci];
+  return clamp((s.t - (st + d * f0)) / Math.max(0.001, d * (f1 - f0)));
+}
+const fin = (s, ci, dur = .5) => ci >= s.n ? 0 : clamp((s.t - s.cs[ci]) / dur);
+const vis = (s, a, b) => Math.min(fin(s, a), b == null ? 1 : 1 - fin(s, b));
+
+function poly(g, pts, close = true) { if (!pts || !pts.length) return; g.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]); if (close) g.closePath(); }
+function polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return L; }
+function partial(pts, p) {
+  if (p <= 0 || pts.length < 2) return [];
+  if (p >= 1) return pts.slice();
+  const L = polyLen(pts) * p; const out = [pts[0]]; let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (acc + d >= L) { out.push(P(pts[i - 1], pts[i], (L - acc) / d)); return out; }
+    acc += d; out.push(pts[i]);
+  }
+  return out;
+}
+function catmull(pts, n = 10) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(j => .5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+function strokePts(g, pts, color, lw, dash) {
+  if (pts.length < 2) return;
+  g.save(); g.beginPath(); poly(g, pts, false);
+  g.strokeStyle = color; g.lineWidth = lw; g.lineCap = 'round'; g.lineJoin = 'round';
+  if (dash) g.setLineDash(dash);
+  g.stroke(); g.restore();
+}
+function incision(g, pts, p, color = '#d7263d', dash) {
+  const q = partial(pts, p);
+  if (q.length < 2) return null;
+  strokePts(g, q, 'rgba(255,255,255,.75)', 12, dash);
+  strokePts(g, q, color, 6, dash);
+  const a = q[q.length - 1], b = q[q.length - 2];
+  return { x: a[0], y: a[1], ang: Math.atan2(a[1] - b[1], a[0] - b[0]) };
+}
+function arrow(g, x1, y1, x2, y2, o = {}) {
+  const c = o.color || '#1f7a8c', lw = o.lw || 5, hd = o.head || 18;
+  g.save(); g.globalAlpha *= (o.a ?? 1);
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  g.strokeStyle = c; g.fillStyle = c; g.lineWidth = lw; g.lineCap = 'round';
+  if (o.dash) g.setLineDash(o.dash);
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2 - Math.cos(ang) * hd * .6, y2 - Math.sin(ang) * hd * .6); g.stroke();
+  g.setLineDash([]);
+  g.beginPath(); g.moveTo(x2, y2);
+  g.lineTo(x2 - Math.cos(ang - .45) * hd, y2 - Math.sin(ang - .45) * hd);
+  g.lineTo(x2 - Math.cos(ang + .45) * hd, y2 - Math.sin(ang + .45) * hd);
+  g.closePath(); g.fill(); g.restore();
+}
+function carrow(g, pts, o = {}) {
+  if (pts.length < 2) return;
+  g.save(); g.globalAlpha *= (o.a ?? 1);
+  strokePts(g, pts.slice(0, -1), o.color || '#1f7a8c', o.lw || 5, o.dash);
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  arrow(g, a[0], a[1], b[0], b[1], { ...o, a: 1, dash: null });
+  g.restore();
+}
+function wrap(g, text, maxW) {
+  const words = text.split(' '); const lines = []; let cur = '';
+  for (const w of words) {
+    const test = cur ? cur + ' ' + w : w;
+    if (g.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; } else cur = test;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+// címke dobozzal és mutatóvonallal
+function tag(g, text, x, y, o = {}) {
+  const a = o.a ?? 1; if (a <= 0.001) return;
+  g.save(); g.globalAlpha *= a;
+  const fs = o.fs || 24;
+  g.font = `${o.bold ? 700 : 600} ${fs}px ${FONT}`;
+  const lines = o.maxW ? wrap(g, text, o.maxW) : text.split('\n');
+  const lw = Math.max(...lines.map(l => g.measureText(l).width));
+  const pad = 11, lh = fs * 1.22;
+  const bw = lw + pad * 2, bh = lines.length * lh + pad * 1.1;
+  let bx = x, by = y - bh / 2;
+  if (o.align === 'c') bx = x - bw / 2; else if (o.align === 'r') bx = x - bw;
+  if (o.to) {
+    const ax = clamp(o.to[0], bx + 8, bx + bw - 8), ay = clamp(o.to[1], by, by + bh);
+    g.strokeStyle = o.lc || 'rgba(25,40,48,.85)'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(ax, ay); g.lineTo(o.to[0], o.to[1]); g.stroke();
+    g.fillStyle = o.lc || 'rgba(25,40,48,.9)';
+    g.beginPath(); g.arc(o.to[0], o.to[1], 5, 0, 7); g.fill();
+  }
+  g.fillStyle = o.bg || 'rgba(255,255,255,.94)';
+  g.shadowColor = 'rgba(0,0,0,.18)'; g.shadowBlur = 8; g.shadowOffsetY = 2;
+  g.beginPath(); g.roundRect(bx, by, bw, bh, 9); g.fill();
+  g.shadowColor = 'transparent';
+  if (o.border) { g.strokeStyle = o.border; g.lineWidth = 3; g.stroke(); }
+  g.fillStyle = o.color || '#1b2a31'; g.textBaseline = 'middle'; g.textAlign = 'left';
+  lines.forEach((l, i) => g.fillText(l, bx + pad, by + pad * .55 + lh * (i + .5)));
+  g.restore();
+}
+function text(g, str, x, y, o = {}) {
+  g.save(); g.globalAlpha *= (o.a ?? 1);
+  g.font = `${o.w || 600} ${o.fs || 24}px ${FONT}`;
+  g.fillStyle = o.color || '#1b2a31'; g.textAlign = o.align || 'left'; g.textBaseline = o.base || 'middle';
+  if (o.maxW) { const lines = wrap(g, str, o.maxW); const lh = (o.fs || 24) * (o.lh || 1.25); lines.forEach((l, i) => g.fillText(l, x, y + i * lh)); g.restore(); return lines.length * lh; }
+  g.fillText(str, x, y); g.restore(); return (o.fs || 24) * 1.25;
+}
+function pulse(g, x, y, t, color = '#ffb400', r0 = 14) {
+  g.save();
+  for (let k = 0; k < 2; k++) {
+    const ph = (t * 1.2 + k * .5) % 1;
+    g.globalAlpha = (1 - ph) * .8; g.strokeStyle = color; g.lineWidth = 4;
+    g.beginPath(); g.arc(x, y, r0 + ph * 34, 0, 7); g.stroke();
+  }
+  g.restore();
+}
+function warnBadge(g, x, y, a = 1, s = 1) {
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.scale(s, s);
+  g.fillStyle = '#e63946'; g.beginPath(); g.moveTo(0, -26); g.lineTo(26, 20); g.lineTo(-26, 20); g.closePath(); g.fill();
+  g.fillStyle = '#fff'; g.font = `800 30px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('!', 0, 5);
+  g.restore();
+}
+function checkBadge(g, x, y, a = 1, ok = true, s = 1) {
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.scale(s, s);
+  g.fillStyle = ok ? '#2a9d55' : '#e63946'; g.beginPath(); g.arc(0, 0, 24, 0, 7); g.fill();
+  g.strokeStyle = '#fff'; g.lineWidth = 6; g.lineCap = 'round'; g.beginPath();
+  if (ok) { g.moveTo(-11, 1); g.lineTo(-3, 10); g.lineTo(12, -9); } else { g.moveTo(-9, -9); g.lineTo(9, 9); g.moveTo(9, -9); g.lineTo(-9, 9); }
+  g.stroke(); g.restore();
+}
+function star(g, x, y, r, a = 1, color = '#ffb400') {
+  g.save(); g.globalAlpha *= a; g.fillStyle = color; g.beginPath();
+  for (let i = 0; i < 16; i++) { const ang = i * Math.PI / 8, rr = i % 2 ? r * .42 : r; g.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr); }
+  g.closePath(); g.fill(); g.restore();
+}
+
+/* ---------- mintázatok, színek ---------- */
+function makePattern(g, base, dots, seed) {
+  const c = document.createElement('canvas'); c.width = c.height = 96; const p = c.getContext('2d');
+  p.fillStyle = base; p.fillRect(0, 0, 96, 96);
+  const r = rng(seed);
+  for (let i = 0; i < 30; i++) {
+    const x = r() * 96, y = r() * 96, rad = 2 + r() * 5.5;
+    p.beginPath(); p.ellipse(x, y, rad, rad * (.55 + r() * .5), r() * 3, 0, 7);
+    p.fillStyle = dots; p.fill();
+    p.beginPath(); p.ellipse(x - 96, y, rad, rad * .7, 0, 0, 7); p.ellipse(x, y - 96, rad, rad * .7, 0, 0, 7); p.fill();
+  }
+  return g.createPattern(c, 'repeat');
+}
+const COL = {
+  enamel: '#fdfcf7', enamelEdge: '#857c6c', root: '#f2e1bd', rootEdge: '#9a835c',
+  bone: '#ecd9b6', boneEdge: '#c49e66', cavity: '#7c3b3f', ging: '#efa9ad', gingEdge: '#c26a74',
+  inc: '#d7263d', nerve: '#f4c430', teal: '#1f7a8c', ink: '#1b2a31', hl: '#ffe066'
+};
+function offscreen() { const c = document.createElement('canvas'); c.width = SW; c.height = SH; return c; }
+const MK = offscreen(), MG = MK.getContext('2d');   // eltávolított terület maszk
+const TK = offscreen(), TG = TK.getContext('2d');   // színezett üreg
+const CK = offscreen(), CG = CK.getContext('2d');   // fedő csont
+let BONE, BONE_C, BONE_T;
+function initPatterns() {
+  BONE = makePattern(ctx, COL.bone, 'rgba(190,150,95,.33)', 7);
+  BONE_C = makePattern(CG, COL.bone, 'rgba(190,150,95,.33)', 7);
+}
+
+/* ---------- oldalnézeti fog ---------- */
+function crownPath(w, ch) {
+  const h = w / 2, p = new Path2D();
+  p.moveTo(-h + 10, 0);
+  p.bezierCurveTo(-h - 4, -ch * .25, -h - 3, -ch * .7, -h + 8, -ch * .88);
+  p.bezierCurveTo(-h + 18, -ch * 1.03, -h * .36, -ch * 1.06, -h * .12, -ch * .93);
+  p.quadraticCurveTo(0, -ch * .85, h * .12, -ch * .93);
+  p.bezierCurveTo(h * .36, -ch * 1.05, h - 18, -ch * 1.01, h - 8, -ch * .88);
+  p.bezierCurveTo(h + 3, -ch * .7, h + 4, -ch * .25, h - 10, 0);
+  p.quadraticCurveTo(0, 9, -h + 10, 0);
+  p.closePath(); return p;
+}
+function rootPath(w, rl, type) {
+  const h = w / 2, p = new Path2D();
+  p.moveTo(-h + 10, 0);
+  if (type === 'conical') {
+    p.bezierCurveTo(-h + 8, rl * .4, -26, rl * .86, -10, rl);
+    p.quadraticCurveTo(0, rl + 10, 10, rl);
+    p.bezierCurveTo(26, rl * .86, h - 8, rl * .4, h - 10, 0);
+  } else if (type === 'curvedD') {
+    p.bezierCurveTo(-h + 4, rl * .45, -h + 18, rl * .86, -h + 52, rl);
+    p.quadraticCurveTo(-h + 72, rl + 6, -h + 74, rl * .9);
+    p.bezierCurveTo(-h + 54, rl * .7, -14, rl * .42, 2, rl * .3);
+    p.bezierCurveTo(16, rl * .45, h - 30, rl * .72, h + 10, rl * .86);
+    p.quadraticCurveTo(h + 26, rl * .84, h + 18, rl * .72);
+    p.bezierCurveTo(h + 2, rl * .55, h + 2, rl * .25, h - 10, 0);
+  } else { // 'two' / 'separate'
+    const sp = type === 'separate' ? 16 : 0;
+    p.bezierCurveTo(-h + 6 - sp, rl * .35, -h + 18 - sp, rl * .8, -h + 32 - sp, rl);
+    p.quadraticCurveTo(-h + 46 - sp, rl + 12, -h + 58 - sp, rl * .95);
+    p.bezierCurveTo(-h + 60 - sp, rl * .6, -14, rl * .38, 0, rl * .3);
+    p.bezierCurveTo(14, rl * .38, h - 60 + sp, rl * .6, h - 58 + sp, rl * .95);
+    p.quadraticCurveTo(h - 46 + sp, rl + 12, h - 32 + sp, rl);
+    p.bezierCurveTo(h - 18 + sp, rl * .8, h - 6 + sp, rl * .35, h - 10, 0);
+  }
+  p.quadraticCurveTo(0, 9, -h + 10, 0);
+  p.closePath(); return p;
+}
+function tSpec(o) { return Object.assign({ w: 152, ch: 112, rl: 185, roots: 'two', dx: 0, dy: 0, rot: 0, pv: [0, 0], alpha: 1 }, o); }
+function toothXf(g, sp, pc) {
+  g.translate(sp.x + sp.dx, sp.y + sp.dy);
+  if (sp.rot) { g.translate(sp.pv[0], sp.pv[1]); g.rotate(sp.rot); g.translate(-sp.pv[0], -sp.pv[1]); }
+  if (pc) {
+    g.translate(pc.dx || 0, pc.dy || 0);
+    if (pc.rot) { const pv = pc.pv || [0, 0]; g.translate(pv[0], pv[1]); g.rotate(pc.rot); g.translate(-pv[0], -pv[1]); }
+  }
+}
+function drawTooth(g, sp) {
+  const crown = crownPath(sp.w, sp.ch), root = rootPath(sp.w, sp.rl, sp.roots);
+  const one = pc => {
+    if (pc && (pc.alpha ?? 1) <= 0.001) return;
+    g.save(); g.globalAlpha *= sp.alpha * (pc ? (pc.alpha ?? 1) : 1);
+    toothXf(g, sp, pc);
+    if (pc && pc.clip) { g.beginPath(); poly(g, pc.clip); g.clip(); }
+    const rg = g.createLinearGradient(-sp.w / 2, 0, sp.w / 2, 0);
+    rg.addColorStop(0, '#e8d3a6'); rg.addColorStop(.45, '#f6e9cc'); rg.addColorStop(1, '#e2c995');
+    g.fillStyle = rg; g.fill(root); g.strokeStyle = COL.rootEdge; g.lineWidth = 3; g.stroke(root);
+    const cg = g.createLinearGradient(-sp.w / 2, -sp.ch, sp.w / 2, 0);
+    cg.addColorStop(0, '#ffffff'); cg.addColorStop(.6, '#f7f3e8'); cg.addColorStop(1, '#e9e1cd');
+    g.fillStyle = cg; g.fill(crown); g.strokeStyle = COL.enamelEdge; g.lineWidth = 3; g.stroke(crown);
+    g.strokeStyle = 'rgba(160,145,120,.55)'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(-sp.w * .12, -sp.ch * .9); g.quadraticCurveTo(0, -sp.ch * .7, sp.w * .12, -sp.ch * .9); g.stroke();
+    if (sp.deco) sp.deco(g, pc);
+    g.restore();
+  };
+  if (sp.pieces) sp.pieces.forEach(one); else one(null);
+}
+function toothShape(g, sp, withRoots = true) { // maszkhoz
+  g.save(); toothXf(g, sp, null);
+  g.fill(crownPath(sp.w, sp.ch)); if (withRoots) g.fill(rootPath(sp.w, sp.rl, sp.roots));
+  g.restore();
+}
+/* oldalnézeti jelenet */
+function side(s, o) {
+  const g = ctx;
+  g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+  // háttér: szájüreg árnyalat felül
+  const bg = g.createLinearGradient(0, 0, 0, 380); bg.addColorStop(0, '#f6e6e3'); bg.addColorStop(1, '#fbf6f1');
+  g.fillStyle = bg; g.fillRect(0, 0, SW, 380);
+  const bonePoly = [...o.top, [SW, SH], [0, SH]];
+  // csont
+  g.save(); g.beginPath(); poly(g, bonePoly); g.fillStyle = BONE; g.fill();
+  const sh = g.createLinearGradient(0, 300, 0, SH); sh.addColorStop(0, 'rgba(255,255,255,0)'); sh.addColorStop(1, 'rgba(150,110,60,.18)');
+  g.fillStyle = sh; g.fill(); g.restore();
+  strokePts(g, o.top, COL.boneEdge, 5);
+  // canalis mandibulae
+  if (o.canal !== false) {
+    const cpts = catmull([[0, 690], [400, 680], [800, 640], [1220, 560]], 12);
+    strokePts(g, cpts, 'rgba(160,120,70,.35)', 34);
+    strokePts(g, cpts, 'rgba(244,196,48,.55)', 9);
+  }
+  // eltávolított terület (üreg)
+  MG.clearRect(0, 0, SW, SH);
+  if (o.mask) { MG.save(); MG.fillStyle = '#000'; MG.strokeStyle = '#000'; MG.lineCap = 'round'; MG.lineJoin = 'round'; o.mask(MG); MG.restore(); }
+  if (o.mask) {
+    TG.clearRect(0, 0, SW, SH); TG.globalCompositeOperation = 'source-over'; TG.drawImage(MK, 0, 0);
+    TG.globalCompositeOperation = 'source-in';
+    const cg = TG.createLinearGradient(0, 200, 0, 700); cg.addColorStop(0, '#9b4c4f'); cg.addColorStop(1, '#5e2a2e');
+    TG.fillStyle = cg; TG.fillRect(0, 0, SW, SH); TG.globalCompositeOperation = 'source-over';
+    g.save(); g.beginPath(); poly(g, bonePoly); g.clip(); g.drawImage(TK, 0, 0); g.restore();
+  }
+  if (o.under) o.under(g);
+  // íny
+  const gx = o.ging ?? 470;
+  const gp = o.top.filter(p => p[0] <= gx + 1);
+  if (gp.length > 1) {
+    const up = gp.map(p => [p[0], p[1] - 24]).reverse();
+    g.save(); g.beginPath(); poly(g, [...gp, ...up]); g.fillStyle = COL.ging; g.fill();
+    g.strokeStyle = COL.gingEdge; g.lineWidth = 2.5; g.stroke(); g.restore();
+  }
+  // fogak
+  (o.teeth || []).forEach(t => drawTooth(g, t));
+  // fedő csont
+  if (o.cover) {
+    CG.clearRect(0, 0, SW, SH); CG.globalCompositeOperation = 'source-over';
+    CG.save(); CG.beginPath(); poly(CG, o.cover); CG.clip();
+    CG.beginPath(); poly(CG, bonePoly); CG.fillStyle = BONE_C; CG.fill();
+    if (o.coverDash) { CG.save(); CG.globalAlpha = .55; CG.setLineDash([9, 8]); CG.strokeStyle = '#6b6152'; CG.lineWidth = 3; toothXf(CG, o.coverDash, null); CG.stroke(crownPath(o.coverDash.w, o.coverDash.ch)); CG.restore(); }
+    CG.restore();
+    if (o.mask) { CG.globalCompositeOperation = 'destination-out'; CG.drawImage(MK, 0, 0); CG.globalCompositeOperation = 'source-over'; }
+    g.drawImage(CK, 0, 0);
+  }
+  if (o.over) o.over(g);
+}
+
+/* ---------- műszerek ---------- */
+function steel(g, x0, y0, x1, y1) {
+  const gr = g.createLinearGradient(x0, y0, x1, y1);
+  gr.addColorStop(0, '#7f8b93'); gr.addColorStop(.35, '#f1f4f6'); gr.addColorStop(.6, '#c4cdd3'); gr.addColorStop(1, '#6f7c85');
+  return gr;
+}
+// könyökdarab: fúróhegy (x,y), a fúró lefelé mutat; ang forgatás
+function contraAngle(g, x, y, ang = 0, bur = 'round', s = 1, burLen = 74) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -4, 0, 4, 0); g.fillRect(-3.5, -burLen, 7, burLen - 10);
+  if (bur === 'round') {
+    const rg = g.createRadialGradient(-3, -11, 2, 0, -8, 11); rg.addColorStop(0, '#fff'); rg.addColorStop(1, '#5d676d');
+    g.fillStyle = rg; g.beginPath(); g.arc(0, -8, 10, 0, 7); g.fill();
+  } else {
+    g.fillStyle = steel(g, -7, 0, 7, 0); g.beginPath(); g.moveTo(-7, -40); g.lineTo(7, -40); g.lineTo(4, 0); g.lineTo(-4, 0); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(60,70,75,.7)'; g.lineWidth = 1.5;
+    for (let k = -36; k < 0; k += 7) { g.beginPath(); g.moveTo(-6, k); g.lineTo(6, k + 5); g.stroke(); }
+  }
+  const hy = -burLen - 18;
+  g.save(); g.translate(8, hy - 4); g.rotate(-.45);
+  g.fillStyle = steel(g, 0, -13, 0, 13); g.beginPath(); g.roundRect(0, -13, 120, 26, 10); g.fill(); g.restore();
+  g.save(); g.translate(100, hy - 52); g.rotate(-.22);
+  g.fillStyle = steel(g, 0, -22, 0, 22); g.beginPath(); g.roundRect(0, -21, 330, 42, 18); g.fill();
+  g.strokeStyle = 'rgba(80,90,96,.6)'; g.lineWidth = 3;
+  for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(150 + k * 14, -21); g.lineTo(150 + k * 14, 21); g.stroke(); }
+  g.fillStyle = '#c0392b'; g.fillRect(250, -21, 6, 42); g.restore();
+  g.fillStyle = steel(g, -24, 0, 24, 0); g.beginPath(); g.ellipse(0, hy, 25, 20, 0, 0, 7); g.fill();
+  g.strokeStyle = 'rgba(70,80,86,.6)'; g.lineWidth = 2; g.stroke();
+  g.restore();
+}
+function straightHP(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -4, 0, 4, 0); g.fillRect(-3, -60, 6, 60);
+  g.fillStyle = steel(g, -20, 0, 20, 0);
+  g.beginPath(); g.moveTo(-8, -60); g.lineTo(8, -60); g.lineTo(20, -110); g.lineTo(-20, -110); g.closePath(); g.fill();
+  g.beginPath(); g.roundRect(-22, -420, 44, 312, 16); g.fill();
+  g.strokeStyle = 'rgba(80,90,96,.6)'; g.lineWidth = 3;
+  for (let k = 0; k < 8; k++) { g.beginPath(); g.moveTo(-22, -170 - k * 13); g.lineTo(22, -170 - k * 13); g.stroke(); }
+  g.restore();
+}
+function chisel(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -9, 0, 9, 0);
+  g.beginPath(); g.moveTo(-9, -140); g.lineTo(9, -140); g.lineTo(9, -18); g.lineTo(0, 0); g.lineTo(-9, -12); g.closePath(); g.fill();
+  g.fillStyle = '#5a6c78'; g.beginPath(); g.roundRect(-17, -330, 34, 192, 8); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,.25)'; g.lineWidth = 3;
+  for (let k = 0; k < 10; k++) { g.beginPath(); g.moveTo(-17, -160 - k * 16); g.lineTo(17, -152 - k * 16); g.stroke(); }
+  g.restore();
+}
+function mallet(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = '#6b4f3a'; g.beginPath(); g.roundRect(-8, 0, 16, 260, 6); g.fill();
+  g.fillStyle = steel(g, -50, 0, 50, 0); g.beginPath(); g.roundRect(-55, -30, 110, 44, 12); g.fill();
+  g.restore();
+}
+function raspatory(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -14, 0, 14, 0);
+  g.beginPath(); g.moveTo(-13, -70); g.lineTo(13, -70); g.lineTo(12, -10); g.quadraticCurveTo(0, 6, -12, -10); g.closePath(); g.fill();
+  g.fillRect(-4, -170, 8, 104);
+  g.fillStyle = '#5a6c78'; g.beginPath(); g.roundRect(-14, -360, 28, 194, 10); g.fill();
+  g.restore();
+}
+function lucas(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -10, 0, 10, 0);
+  g.beginPath(); g.ellipse(0, -10, 10, 16, 0, 0, 7); g.fill();
+  g.fillStyle = 'rgba(80,90,96,.6)'; g.beginPath(); g.ellipse(0, -10, 5, 10, 0, 0, 7); g.fill();
+  g.strokeStyle = steel(g, -4, 0, 4, 0); g.lineWidth = 6; g.beginPath(); g.moveTo(0, -24); g.quadraticCurveTo(-14, -80, 0, -150); g.stroke();
+  g.fillStyle = '#5a6c78'; g.beginPath(); g.roundRect(-13, -340, 26, 192, 10); g.fill();
+  g.restore();
+}
+function scissors(g, x, y, ang = 0, s = 1, open = .2) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  for (const sg of [-1, 1]) {
+    g.save(); g.rotate(sg * open);
+    g.fillStyle = steel(g, -6, 0, 6, 0);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(sg * 10, -50, sg * 5, -90); g.lineTo(-sg * 3, -90); g.closePath(); g.fill();
+    g.fillRect(-3 + sg * 2, -170, 6, 82);
+    g.strokeStyle = '#6f7c85'; g.lineWidth = 6; g.beginPath(); g.ellipse(sg * 14, -190, 14, 20, 0, 0, 7); g.stroke();
+    g.restore();
+  }
+  g.restore();
+}
+function scalpel(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, 0, -12, 0, 12);
+  g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(-14, -14, -44, -10); g.lineTo(-52, -6); g.lineTo(-52, 6); g.lineTo(-30, 7); g.quadraticCurveTo(-10, 6, 0, 0); g.fill();
+  g.fillStyle = '#8f9aa1'; g.beginPath(); g.roundRect(-190, -6, 140, 12, 5); g.fill();
+  g.restore();
+}
+function barry(g, x, y, ang = 0, s = 1) { // karom formájú emelő, hegy (0,0)
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -14, 0, 14, 0);
+  g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(-18, 10, -16, 40); g.lineTo(12, 46); g.quadraticCurveTo(12, 16, 0, 0); g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(70,80,86,.7)'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = steel(g, -6, 0, 6, 0);
+  g.beginPath(); g.moveTo(-10, 42); g.lineTo(8, 46); g.lineTo(-38, 200); g.lineTo(-52, 196); g.closePath(); g.fill();
+  g.fillStyle = '#5a6c78'; g.save(); g.translate(-46, 200); g.rotate(.29); g.beginPath(); g.roundRect(-17, 0, 34, 230, 12); g.fill(); g.restore();
+  g.restore();
+}
+function lecluse(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, -12, 0, 12, 0);
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(13, -70); g.lineTo(-13, -70); g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(70,80,86,.7)'; g.lineWidth = 2; g.stroke();
+  g.fillRect(-5, -190, 10, 122);
+  g.fillStyle = '#5a6c78'; g.beginPath(); g.roundRect(-30, -230, 60, 44, 14); g.fill();
+  g.beginPath(); g.roundRect(-14, -390, 28, 170, 10); g.fill();
+  g.restore();
+}
+function syringe(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.strokeStyle = '#8a969d'; g.lineWidth = 4; g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(0, -40, 10, -70); g.stroke();
+  g.fillStyle = 'rgba(200,225,240,.85)'; g.strokeStyle = '#6f8592'; g.lineWidth = 3;
+  g.beginPath(); g.roundRect(-8, -270, 40, 200, 8); g.fill(); g.stroke();
+  g.fillStyle = 'rgba(80,160,220,.55)'; g.fillRect(-4, -200, 32, 126);
+  g.fillStyle = '#6f8592'; g.fillRect(4, -330, 8, 62); g.fillRect(-14, -336, 52, 8);
+  g.restore();
+}
+function forceps(g, x, y, ang = 0, s = 1, open = .06) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  for (const sg of [-1, 1]) { g.save(); g.rotate(sg * open); g.fillStyle = steel(g, -5, 0, 5, 0); g.beginPath(); g.moveTo(0, 0); g.lineTo(sg * 7, -10); g.lineTo(sg * 9, -300); g.lineTo(sg * 2, -300); g.closePath(); g.fill(); g.restore(); }
+  g.restore();
+}
+function suction(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.strokeStyle = '#9aa5ab'; g.lineWidth = 16; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(10, -80, 60, -140); g.lineTo(260, -260); g.stroke();
+  g.strokeStyle = '#d9e0e4'; g.lineWidth = 5; g.beginPath(); g.moveTo(2, -6); g.quadraticCurveTo(12, -80, 60, -140); g.stroke();
+  g.restore();
+}
+function retractor(g, x, y, ang = 0, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang); g.scale(s, s);
+  g.fillStyle = steel(g, 0, -20, 0, 20);
+  g.beginPath(); g.roundRect(-70, -14, 140, 28, 12); g.fill();
+  g.beginPath(); g.roundRect(-14, 0, 28, 230, 10); g.fill();
+  g.restore();
+}
+
+/* ---------- felülnézet (okkluzális) ---------- */
+const OC = { pm: { x: 120, y: 400, a: 62, b: 66 }, m1: { x: 330, y: 400, a: 106, b: 98 }, m2: { x: 556, y: 400, a: 100, b: 94 }, m3: { x: 800, y: 410, a: 90, b: 84 } };
+function se(t, th, off = 0, n = 4) {
+  const c = Math.cos(th), s = Math.sin(th), e = 2 / n;
+  return [t.x + (t.a + off) * Math.sign(c) * Math.pow(Math.abs(c), e), t.y + (t.b + off) * Math.sign(s) * Math.pow(Math.abs(s), e)];
+}
+function seArc(t, a0, a1, off, n = 50) { const o = []; for (let i = 0; i <= n; i++) o.push(se(t, lerp(a0, a1, i / n), off)); return o; }
+function sePoly(t, off = 0) { return seArc(t, 0, Math.PI * 2, off, 90); }
+function occTooth(g, t, kind = 'molar', a = 1) {
+  g.save(); g.globalAlpha *= a;
+  const pts = sePoly(t);
+  const gr = g.createRadialGradient(t.x - t.a * .2, t.y - t.b * .2, 10, t.x, t.y, t.a * 1.1);
+  gr.addColorStop(0, '#ffffff'); gr.addColorStop(.7, '#f6f1e4'); gr.addColorStop(1, '#e2d8c2');
+  g.beginPath(); poly(g, pts); g.fillStyle = gr; g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 10; g.shadowOffsetY = 4; g.fill();
+  g.shadowColor = 'transparent'; g.strokeStyle = COL.enamelEdge; g.lineWidth = 3; g.stroke();
+  g.strokeStyle = '#b6a78d'; g.lineWidth = 3; g.lineCap = 'round';
+  const X = t.x, Y = t.y, a_ = t.a, b_ = t.b;
+  g.beginPath();
+  if (kind === 'molar') {
+    g.moveTo(X - a_ * .55, Y + 4); g.quadraticCurveTo(X, Y - 10, X + a_ * .55, Y + 2);
+    g.moveTo(X - a_ * .1, Y - 3); g.lineTo(X - a_ * .15, Y + b_ * .62);
+    g.moveTo(X + a_ * .3, Y); g.lineTo(X + a_ * .42, Y + b_ * .55);
+    g.moveTo(X + a_ * .02, Y - 4); g.lineTo(X + a_ * .05, Y - b_ * .62);
+  } else { g.moveTo(X - a_ * .5, Y); g.quadraticCurveTo(X, Y - 8, X + a_ * .5, Y); }
+  g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.7)';
+  if (kind === 'molar') for (const [u, v] of [[-.5, -.45], [.25, -.45], [-.5, .4], [0.1, .45], [.65, .3]]) { g.beginPath(); g.ellipse(X + u * a_, Y + v * b_, a_ * .18, b_ * .16, 0, 0, 7); g.fill(); }
+  g.restore();
+}
+const RIDGE_TOP = catmull([[0, 288], [300, 282], [650, 290], [880, 318], [1000, 335], [1220, 210]], 10);
+const RIDGE_BOT = catmull([[1220, 600], [1000, 470], [880, 500], [650, 528], [300, 522], [0, 520]], 10);
+const VEST = catmull([[0, 690], [500, 702], [900, 655], [1220, 590]], 12);
+const TRIG = catmull([[668, 318], [840, 352], [1000, 398], [840, 446], [668, 486]], 8);
+function occBase(g, o = {}) {
+  g.fillStyle = '#e99da2'; g.fillRect(0, 0, SW, SH);
+  // lingualis (szájfenék / nyelv felőli)
+  const lg = g.createLinearGradient(0, 0, 0, 290); lg.addColorStop(0, '#d9737d'); lg.addColorStop(1, '#e58e95');
+  g.fillStyle = lg; g.beginPath(); poly(g, [[0, 0], [SW, 0], ...RIDGE_TOP.slice().reverse()]); g.fill();
+  // alveolaris nyálkahártya a vestibulumig
+  g.fillStyle = '#eeaaad'; g.beginPath(); poly(g, [...RIDGE_BOT, ...VEST.slice().reverse()]); g.fill();
+  // feszes íny (gerinc)
+  g.fillStyle = '#f5c3c0'; g.beginPath(); poly(g, [...RIDGE_TOP, ...RIDGE_BOT]); g.fill();
+  // ramus
+  const rg = g.createLinearGradient(980, 0, 1220, 0); rg.addColorStop(0, 'rgba(200,100,110,0)'); rg.addColorStop(1, 'rgba(190,90,100,.45)');
+  g.fillStyle = rg; g.beginPath(); poly(g, [[990, 340], ...catmull([[990, 340], [1100, 280], [1220, 200]], 6), [1220, 610], ...catmull([[1220, 610], [1100, 520], [990, 460]], 6)]); g.fill();
+  strokePts(g, catmull([[995, 345], [1100, 282], [1220, 205]], 8), 'rgba(150,60,70,.35)', 3, [10, 8]);
+  strokePts(g, catmull([[995, 455], [1100, 518], [1220, 605]], 8), 'rgba(150,60,70,.35)', 3, [10, 8]);
+  // trigonum
+  g.save(); g.beginPath(); poly(g, TRIG); g.fillStyle = 'rgba(255,236,230,.55)'; g.fill();
+  g.setLineDash([6, 7]); g.strokeStyle = 'rgba(150,70,80,.55)'; g.lineWidth = 2.5; g.stroke(); g.restore();
+  // vestibulum
+  strokePts(g, VEST, 'rgba(140,50,60,.45)', 3, [14, 10]);
+  if (o.under) o.under(g);
+  // impactált 3. moláris a nyálkahártya / csont alatt
+  if (o.m3 !== false) {
+    g.save(); g.beginPath(); poly(g, sePoly(OC.m3)); g.fillStyle = 'rgba(255,255,250,.22)'; g.fill();
+    g.setLineDash([10, 8]); g.strokeStyle = 'rgba(90,70,60,.55)'; g.lineWidth = 3; g.stroke(); g.restore();
+  }
+  occTooth(g, OC.pm, 'pm'); occTooth(g, OC.m1); occTooth(g, OC.m2);
+  // tájolás
+  g.save(); g.globalAlpha = .85;
+  g.fillStyle = 'rgba(255,255,255,.82)'; g.beginPath(); g.roundRect(14, SH - 118, 300, 104, 12); g.fill();
+  text(g, '← mesialis   distalis →', 164, SH - 92, { align: 'center', fs: 20, w: 600 });
+  text(g, '↑ lingualis (nyelv felől)', 164, SH - 62, { align: 'center', fs: 20, w: 600 });
+  text(g, '↓ buccalis (pofa felől)', 164, SH - 34, { align: 'center', fs: 20, w: 600 });
+  g.restore();
+}
+function occLabels(g, a = 1, which = {}) {
+  if (which.trig !== false) tag(g, 'trigonum retromolare', 900, 560, { a, to: [880, 405], fs: 22 });
+  if (which.ramus !== false) tag(g, 'ramus mandibulae', 1205, 120, { a, align: 'r', to: [1150, 330], fs: 22 });
+  if (which.m2 !== false) tag(g, '2. moláris', 556, 590, { a, align: 'c', to: [556, 470], fs: 22 });
+  if (which.m1 !== false) tag(g, '1. moláris', 330, 590, { a, align: 'c', to: [330, 470], fs: 22 });
+  if (which.m3 !== false) tag(g, 'impactált bölcsességfog (nyálkahártya alatt)', 760, 200, { a, align: 'c', to: [800, 360], fs: 22 });
+  if (which.vest) tag(g, 'áthajlás (vestibulum)', 980, 700, { a, align: 'c', to: [900, 656], fs: 21 });
+}
+// metszésvonalak
+const M2D = se(OC.m2, -0.35, 7);
+const DISTAL = catmull([[1090, 366], [990, 372], [870, 372], [750, 362], M2D], 8);
+const SULC_M2 = seArc(OC.m2, -0.35, Math.PI * .86, 7, 60);
+const PAP12 = [446, 488];
+const SULC_M1 = seArc(OC.m1, .5, Math.PI * .86, 7, 50);
+const PAP_M1M = [215, 482];
+const ENV_BASE = [...DISTAL, ...SULC_M2, PAP12];
+const ENV_EXT = [PAP12, ...SULC_M1, PAP_M1M];
+const DB = se(OC.m2, .55, 7);
+const TRI_SULC = seArc(OC.m2, -0.35, .55, 7, 30);
+const REL_END = [DB[0] - 186, DB[1] + 186];
+const TRI = [...DISTAL, ...TRI_SULC, ...partial([DB, REL_END], 1)];
+const REL_ALT = [PAP12, [PAP12[0] - 170, PAP12[1] + 170]];
+const NERVE_OCC = catmull([[1220, 236], [1080, 300], [930, 322], [790, 312], [660, 268], [520, 205], [380, 150]], 10);
+
+/* =====================================================================
+   JELENETEK
+   ===================================================================== */
+const SCENES = [];
+function scene(o) { SCENES.push(o); }
+
+/* ---- 0. Cím ---- */
+scene({
+  full: true, chap: '', title: '',
+  caps: ['Alsó bölcsességfogak műtéti eltávolítása – animált oktatóvideó.',
+    'A lépések: lebenyképzés, csonteltávolítás, disszekció, a fog eltávolítása és a sebzárás.'],
+  draw(s) {
+    const g = ctx;
+    const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, '#0d2a31'); bg.addColorStop(1, '#17606b');
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const r = rng(3);
+    g.save(); for (let i = 0; i < 40; i++) { const x = r() * W, y = r() * H, rr = 2 + r() * 4; g.globalAlpha = .08 + .08 * Math.sin(s.t * 1.3 + i); g.fillStyle = '#bfe8ee'; g.beginPath(); g.arc(x, y, rr, 0, 7); g.fill(); } g.restore();
+    const a = easeOut(clamp(s.t / 1.2));
+    g.save(); g.globalAlpha = a; g.translate(470, 560 + (1 - a) * 40); g.scale(1.7, 1.7);
+    g.save(); g.rotate(-0.12 + Math.sin(s.t * .8) * .03);
+    drawTooth(g, tSpec({ x: 0, y: 0, roots: 'two' })); g.restore();
+    g.restore();
+    const b = easeOut(clamp((s.t - .4) / 1.2));
+    g.save(); g.globalAlpha = b; g.translate((1 - b) * 40, 0);
+    text(g, '6.1 · Szájsebészet', 860, 300, { fs: 32, w: 700, color: '#8fd3dc' });
+    text(g, 'Alsó bölcsességfogak', 860, 390, { fs: 86, w: 800, color: '#ffffff' });
+    text(g, 'műtéti eltávolítása', 860, 488, { fs: 86, w: 800, color: '#ffffff' });
+    g.fillStyle = COL.hl; g.fillRect(864, 548, 380, 8);
+    g.restore();
+    const c = easeOut(clamp((s.t - 1.2) / 1.2));
+    g.save(); g.globalAlpha = c;
+    text(g, 'Lebenyképzés · Csonteltávolítás · Disszekció · Emelés · Sebzárás', 864, 610, { fs: 32, w: 600, color: '#d6eef1' });
+    text(g, 'Animált, feliratozott oktatóvideó – a tankönyvi leírás (6.1 fejezet) alapján', 864, 664, { fs: 26, w: 500, color: '#a9d2d8' });
+    g.restore();
+  }
+});
+
+/* ---- 1. Lebenyképzés – alapelvek ---- */
+scene({
+  chap: '6.1.1', title: 'Lebenyképzés – alapelvek',
+  caps: ['Az alsó bölcsességfog műtéti eltávolításánál teljes vastagságú, mucoperiostealis lebenyt képzünk.',
+    'A lebeny a nyálkahártyát és a csonthártyát együtt tartalmazza – közvetlenül a csont felszínéről emeljük le.',
+    'Alapvetően két lebenytípust különböztetünk meg: segédmetszés nélkül és segédmetszéssel készített műtéti lebenyeket.',
+    'A megfelelő lebennyel szemben támasztott követelmények: a műtéti terület átláthatósága, a csontfúrás biztonsága,',
+    'a könnyű eltarthatóság a sebkampó segítségével,',
+    'valamint a sebszélek szoros egyesítésének lehetősége, a szomszédos fogak parodontiumának kímélésével.'],
+  bullets: [['Teljes vastagságú, mucoperiostealis lebeny', 0], ['Nyálkahártya + periosteum együtt, a csontról leemelve', 1], ['Két típus: segédmetszés nélküli / segédmetszéssel készített', 2],
+    ['Átlátható műtéti terület, biztonságos csontfúrás', 3], ['Könnyű eltartás sebkampóval', 4], ['Szoros sebszél-egyesítés, a szomszédos fogak parodontiumának kímélése', 5]],
+  draw(s) {
+    const g = ctx;
+    g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+    const x0 = 110, x1 = 1110, cutX = 330, hinge = 990;
+    const boneTop = 400, perTh = 12, mucTh = 72;
+    const lift = A(s, 1, .1, .75) * (1 - A(s, 2, 0, .3) * 0);
+    const L = x => x < cutX ? 0 : 175 * lift * Math.pow(clamp((hinge - x) / (hinge - cutX)), 1.5);
+    // csont
+    g.save(); g.beginPath(); g.roundRect(x0, boneTop, x1 - x0, 300, [0, 0, 20, 20]); g.fillStyle = BONE; g.fill(); g.restore();
+    strokePts(g, [[x0, boneTop], [x1, boneTop]], COL.boneEdge, 6);
+    // lebeny rétegek
+    const N = 80;
+    const layer = (yTop, th, color, edge, from, to) => {
+      const top = [], bot = [];
+      for (let i = 0; i <= N; i++) { const x = lerp(from, to, i / N); top.push([x, yTop - L(x) - th]); bot.push([x, yTop - L(x)]); }
+      g.beginPath(); poly(g, [...top, ...bot.reverse()]); g.fillStyle = color; g.fill();
+      if (edge) { g.strokeStyle = edge; g.lineWidth = 2; g.stroke(); }
+    };
+    const cutP = A(s, 0, .3, .85);
+    for (const [from, to] of [[x0, cutX - 3 * cutP], [cutX + 3 * cutP, x1]]) {
+      layer(boneTop, perTh, '#b5475a', null, from, to);
+      layer(boneTop - perTh, mucTh, '#f1aeb2', '#c86d77', from, to);
+    }
+    // hámfelszín
+    // metszés
+    if (cutP > 0) {
+      strokePts(g, [[cutX, boneTop - perTh - mucTh - 40], [cutX, lerp(boneTop - perTh - mucTh - 40, boneTop, cutP)]], COL.inc, 5);
+      if (cutP < 1) scalpel(g, cutX, lerp(boneTop - perTh - mucTh - 40, boneTop, cutP), Math.PI / 2, 1);
+    }
+    // raspatórium
+    if (lift > 0 && lift < 1 || (lift >= 1 && s.ci === 1)) {
+      const tx = cutX + 30 + 330 * lift;
+      raspatory(g, tx, boneTop - 4, -Math.PI / 2 - .12, 1);
+      arrow(g, cutX + 40, boneTop + 60, cutX + 340, boneTop + 60, { color: COL.teal, a: fin(s, 1) * (1 - A(s, 2, 0, .2)) });
+    }
+    const la = fin(s, 0, .8) * (1 - A(s, 2, 0, .25));
+    tag(g, 'nyálkahártya (mucosa)', 160, 210, { a: la, to: [220, boneTop - 50], fs: 23 });
+    tag(g, 'csonthártya (periosteum)', 160, 285, { a: la, to: [250, boneTop - 6], fs: 23, align: 'l' });
+    tag(g, 'csont', 1080, 560, { a: la, align: 'r', fs: 23 });
+    if (lift > 0.6) {
+      const a2 = clamp((lift - .6) / .4) * (1 - A(s, 2, 0, .25));
+      tag(g, 'teljes vastagságú lebeny =\nnyálkahártya + periosteum', 560, 150, { a: a2, to: [520, boneTop - L(520) - 40], fs: 25, bold: true, border: COL.teal });
+      tag(g, 'csupasz csontfelszín', 760, 470, { a: a2, to: [640, boneTop + 3], fs: 22 });
+    }
+    // két lebenytípus kártyák
+    const ca = A(s, 2, 0, .35);
+    if (ca > 0) {
+      g.save(); g.globalAlpha = ca;
+      g.fillStyle = 'rgba(251,246,241,.94)'; g.fillRect(0, 0, SW, SH);
+      const card = (x, title, tri) => {
+        g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.15)'; g.shadowBlur = 14; g.beginPath(); g.roundRect(x, 90, 520, 560, 18); g.fill(); g.shadowColor = 'transparent';
+        text(g, title, x + 260, 140, { fs: 30, w: 700, align: 'center', color: COL.teal });
+        g.save(); g.translate(x + 30, 200); g.scale(.4, .4); g.translate(-60, -120);
+        g.fillStyle = '#f5c3c0'; g.beginPath(); g.roundRect(0, 250, 1150, 300, 40); g.fill();
+        occTooth(g, OC.m1); occTooth(g, OC.m2);
+        g.beginPath(); poly(g, sePoly(OC.m3)); g.setLineDash([10, 8]); g.strokeStyle = 'rgba(90,70,60,.55)'; g.lineWidth = 4; g.stroke(); g.setLineDash([]);
+        const p = A(s, 2, .2, .8);
+        const pts = tri ? TRI : [...ENV_BASE];
+        const q = partial(pts, p); strokePts(g, q, COL.inc, 12);
+        g.restore();
+        text(g, tri ? 'distalis metszés + 45°-os\nsegédmetszés az áthajlás felé' : 'distalis metszés + sulcularis\n(gingivalis) metszés', x + 260, 560, { fs: 24, align: 'center', w: 500 });
+      };
+      card(70, 'Segédmetszés nélküli', false);
+      card(630, 'Segédmetszéssel készített', true);
+      g.restore();
+    }
+    // követelmények ikonjai
+    const ra = A(s, 3, 0, .3);
+    if (ra > 0) {
+      g.save(); g.globalAlpha = ra; g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+      const items = [['👁', 'Átláthatóság,\nbiztonságos csontfúrás', 3], ['⟂', 'Könnyű eltartás\nsebkampóval', 4], ['∞', 'Szoros sebzárás,\na parodontium kímélése', 5]];
+      items.forEach(([ic, t, ci], i) => {
+        const a = fin(s, ci, .6); if (a <= 0) return;
+        const x = 70 + i * 375;
+        g.save(); g.globalAlpha *= a; g.translate(0, (1 - a) * 30);
+        g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.15)'; g.shadowBlur = 14; g.beginPath(); g.roundRect(x, 150, 340, 440, 20); g.fill(); g.shadowColor = 'transparent';
+        g.fillStyle = s.ci === ci ? COL.hl : '#e3f1f3'; g.beginPath(); g.arc(x + 170, 290, 90, 0, 7); g.fill();
+        g.strokeStyle = COL.teal; g.fillStyle = COL.teal; g.lineWidth = 8; g.lineCap = 'round';
+        const cx = x + 170, cy = 290;
+        if (i === 0) { g.beginPath(); g.ellipse(cx, cy, 55, 32, 0, 0, 7); g.stroke(); g.beginPath(); g.arc(cx, cy, 18, 0, 7); g.fill(); }
+        if (i === 1) { g.beginPath(); g.moveTo(cx - 50, cy - 40); g.lineTo(cx + 30, cy - 40); g.quadraticCurveTo(cx + 55, cy - 40, cx + 55, cy - 10); g.lineTo(cx + 55, cy + 45); g.stroke(); g.beginPath(); g.moveTo(cx - 50, cy - 40); g.lineTo(cx - 50, cy + 50); g.stroke(); }
+        if (i === 2) { g.beginPath(); g.moveTo(cx - 60, cy); g.lineTo(cx + 60, cy); g.stroke(); for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(cx + k * 35 - 12, cy - 28); g.lineTo(cx + k * 35 + 12, cy + 28); g.stroke(); } }
+        text(g, t.split('\n')[0], x + 170, 450, { fs: 28, w: 700, align: 'center' });
+        text(g, t.split('\n')[1], x + 170, 490, { fs: 28, w: 700, align: 'center' });
+        g.restore();
+      });
+      g.restore();
+    }
+  }
+});
+
+/* ---- 2. Envelope lebeny metszésvonala ---- */
+scene({
+  chap: '6.1.1', title: 'Segédmetszés nélküli („envelope”) lebeny',
+  caps: ['Segédmetszés nélküli, a sulcusban vezetett („envelope”) lebeny – 6.1. ábra.',
+    'A metszésvonal a trigonum retromolare felett, a ramus szélénél kezdődik.',
+    'Mesialis irányban a trigonum lingualis 1/3-ánál halad, a 2. molaris distalis felszínének lingualis 1/3-áig.',
+    'Az ezt követő gingivalis metszés buccalis irányban megkerüli a második molaris distalis felszínét…',
+    '…majd az első őrlőfog distalis papillájáig folytatódik.',
+    'Szükség esetén kiterjeszthető az első őrlőfog mesialis papillájáig.'],
+  bullets: [['Kezdet: a trigonum retromolare felett, a ramus szélénél', 1], ['Mesialisan: a trigonum lingualis 1/3-a → a 2. molaris distalis felszínének lingualis 1/3-a', 2],
+    ['Gingivalis (sulcularis) metszés: buccalisan megkerüli a 2. molarist', 3], ['Vége: az 1. őrlőfog distalis papillája', 4], ['Kiterjesztve: az 1. őrlőfog mesialis papillája', 5]],
+  draw(s) {
+    const g = ctx;
+    occBase(g);
+    const la = fin(s, 0, .8) * (1 - fin(s, 2, .6));
+    occLabels(g, la, { vest: true });
+    // trigonum harmadolás
+    const th = vis(s, 2, 3);
+    if (th > 0) {
+      g.save(); g.globalAlpha = th; g.beginPath(); poly(g, TRIG); g.clip();
+      g.fillStyle = 'rgba(31,122,140,.18)'; g.fillRect(660, 300, 400, 74);
+      g.setLineDash([6, 6]); g.strokeStyle = COL.teal; g.lineWidth = 2;
+      for (const y of [374, 425]) { g.beginPath(); g.moveTo(660, y); g.lineTo(1000, y); g.stroke(); }
+      g.restore();
+      tag(g, 'lingualis 1/3', 1180, 290, { a: th, align: 'r', to: [930, 368], fs: 22, border: COL.teal });
+    }
+    // metszés kirajzolása
+    const lDist = polyLen(DISTAL), lBase = polyLen(ENV_BASE);
+    const p1 = A(s, 1, .25, 1) * (lDist * .35 / lBase);
+    const p2 = A(s, 2, .1, .95) * (lDist / lBase - lDist * .35 / lBase);
+    const p3 = A(s, 3, .1, .95) * ((lBase - lDist) / lBase * .62);
+    const p4 = A(s, 4, .05, .8) * ((lBase - lDist) / lBase * .38);
+    const head = incision(g, ENV_BASE, p1 + p2 + p3 + p4);
+    let head2 = null;
+    if (s.ci >= 5) head2 = incision(g, ENV_EXT, A(s, 5, .1, .9), '#e36414', [14, 10]);
+    const hh = head2 || head;
+    if (hh && (s.ci < 5 ? (p1 + p2 + p3 + p4) < .999 : A(s, 5, .1, .9) < .999)) scalpel(g, hh.x, hh.y, hh.ang, .9);
+    if (s.ci >= 1) pulse(g, 1090, 366, s.t, '#ffb400', 10 * (1 - A(s, 2, 0, .3)));
+    tag(g, 'kezdet: a ramus szélénél', 1200, 470, { a: vis(s, 1, 3), align: 'r', to: [1090, 366], fs: 22 });
+    tag(g, 'a 2. molaris distalis felszínének lingualis 1/3-a', 600, 240, { a: vis(s, 2, 4), align: 'c', to: M2D, fs: 22 });
+    tag(g, 'gingivalis metszés a sulcusban', 760, 600, { a: vis(s, 3, 5), align: 'c', to: se(OC.m2, .9, 7), fs: 22 });
+    tag(g, '1. őrlőfog distalis papillája', 440, 640, { a: vis(s, 4), align: 'c', to: PAP12, fs: 22 });
+    tag(g, 'kiterjesztés: mesialis papilla', 190, 230, { a: vis(s, 5), align: 'c', to: PAP_M1M, fs: 22, border: '#e36414' });
+  }
+});
+
+/* ---- 3. Leválasztás, n. lingualis ---- */
+scene({
+  chap: '6.1.1', title: 'A lebeny leválasztása – a n. lingualis védelme',
+  caps: ['A csonthártya–nyálkahártya lebeny buccalis irányú leválasztásakor…',
+    '…a legtöbb nehézséget a trigonum retromolare feletti vastag, fibroticus nyálkahártya okozza.',
+    'A lebeny preparálásánál a raspatórium mellett gyakran olló és szike használatára is kényszerülünk.',
+    'Lingualisan óvatosan, a csont felszínén haladva dolgozunk: leginkább hajlított Lucas-kanállal; a kisméretű, hajlított végű raspatórium is jó eszköz.',
+    'Az óvatos preparálásra a n. lingualis sérülésének elkerülése miatt van szükség.',
+    'Az ideg általában a trigonum medialis oldalánál, 2–3 mm-rel mélyebben, közvetlenül a nyálkahártya alatt fut.'],
+  bullets: [['Buccalis leválasztás: nehéz a vastag, fibroticus nyálkahártya a trigonum felett', 1], ['Raspatórium mellett: olló, szike', 2],
+    ['Lingualisan: a csonton haladva, Lucas-kanál / kis hajlított raspatórium', 3], ['Cél: a n. lingualis védelme', 4], ['N. lingualis: a trigonum medialis oldalán, 2–3 mm mélyen, közvetlenül a nyálkahártya alatt', 5]],
+  draw(s) {
+    const g = ctx;
+    const p = A(s, 0, .15, .9);
+    const q = A(s, 3, .2, .8);
+    const buc = ENV_BASE;
+    occBase(g, {
+      under: g => {
+        // buccalis lebeny leválasztása – csupasz csont
+        const low = buc.map(([x, y]) => [x, y + p * (x > 640 ? 175 : 175 - (640 - x) * .5)]);
+        g.save(); g.beginPath(); poly(g, [...buc, ...low.slice().reverse()]); g.fillStyle = BONE; g.fill(); g.restore();
+        // lingualis kis leválasztás
+        const dl = DISTAL.filter(pt => pt[0] > 700);
+        const up = dl.map(([x, y]) => [x, y - q * 46]);
+        if (q > 0) { g.save(); g.beginPath(); poly(g, [...dl, ...up.slice().reverse()]); g.fillStyle = BONE; g.fill(); g.restore(); strokePts(g, up, '#d9737d', 14); strokePts(g, up, '#f1b0b4', 6); }
+        // visszahajtott lebeny széle
+        strokePts(g, low, '#d27b83', 26); strokePts(g, low, '#f3b9bc', 10);
+      }
+    });
+    strokePts(g, ENV_BASE, 'rgba(160,30,45,.6)', 3);
+    if (p > 0 && p < 1) arrow(g, 860, 420, 860, 560, { color: COL.teal });
+    tag(g, 'buccalis lebeny visszahajtva', 1000, 640, { a: fin(s, 0, 1) * (1 - fin(s, 3)), align: 'c', to: [880, 545], fs: 22 });
+    // fibroticus nyálkahártya
+    const fa = vis(s, 1, 3);
+    if (fa > 0) {
+      g.save(); g.globalAlpha = fa * .8; g.beginPath(); poly(g, TRIG); g.clip();
+      g.strokeStyle = 'rgba(120,40,50,.55)'; g.lineWidth = 3;
+      for (let x = 600; x < 1100; x += 16) { g.beginPath(); g.moveTo(x, 300); g.lineTo(x - 90, 500); g.stroke(); }
+      g.restore();
+      tag(g, 'vastag, fibroticus nyálkahártya', 920, 210, { a: fa, align: 'c', to: [900, 390], fs: 23, bold: true, border: '#e36414' });
+    }
+    const ia = vis(s, 2, 3);
+    if (ia > 0) {
+      g.save(); g.globalAlpha = ia;
+      raspatory(g, 960, 470, -2.3, .75);
+      scissors(g, 1050, 395, -1.1, .75, .12 + .1 * Math.sin(s.t * 8));
+      scalpel(g, 760, 360, .1, 1);
+      g.restore();
+      tag(g, 'raspatórium', 1130, 560, { a: ia, align: 'c', fs: 21 });
+      tag(g, 'olló', 1180, 330, { a: ia, align: 'c', fs: 21 });
+      tag(g, 'szike', 620, 300, { a: ia, align: 'c', fs: 21 });
+    }
+    // lingualis eszköz
+    const lq = vis(s, 3, 4);
+    if (lq > 0) { g.save(); g.globalAlpha = lq; lucas(g, 900 - 60 * q, 330, -2.75, .75); g.restore(); tag(g, 'hajlított Lucas-kanál – a csonton haladva', 640, 110, { a: lq, align: 'c', to: [880, 300], fs: 22 }); }
+    // ideg
+    const na = fin(s, 4, .8);
+    if (na > 0) {
+      g.save(); g.globalAlpha = na;
+      strokePts(g, NERVE_OCC, 'rgba(120,90,0,.6)', 15, [18, 10]);
+      strokePts(g, NERVE_OCC, COL.nerve, 9, [18, 10]);
+      g.restore();
+      if (s.ci === 4) pulse(g, 930, 322, s.t, '#f4c430', 14);
+      tag(g, 'n. lingualis', 1160, 120, { a: na, align: 'r', to: [1040, 312], fs: 24, bold: true, border: COL.nerve });
+    }
+    // keresztmetszet inzert
+    const ia2 = fin(s, 5, .7);
+    if (ia2 > 0) {
+      g.save(); g.globalAlpha = ia2;
+      const bx = 20, by = 20, bw = 440, bh = 300;
+      g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 14; g.beginPath(); g.roundRect(bx, by, bw, bh, 14); g.fill(); g.shadowColor = 'transparent';
+      text(g, 'Keresztmetszet (sémás)', bx + 16, by + 26, { fs: 20, w: 700, color: COL.teal });
+      g.save(); g.translate(bx, by);
+      g.beginPath(); poly(g, [[60, 290], [80, 140], [130, 110], [300, 110], [330, 130], [345, 290]]); g.fillStyle = BONE; g.fill(); g.strokeStyle = COL.boneEdge; g.lineWidth = 3; g.stroke();
+      g.beginPath(); poly(g, [[70, 140], [120, 96], [300, 96], [345, 118], [380, 160], [395, 290], [372, 290], [358, 172], [330, 136], [300, 122], [130, 122], [84, 150], [78, 290], [62, 290]]); g.fillStyle = '#f1aeb2'; g.fill(); g.strokeStyle = '#c86d77'; g.lineWidth = 2; g.stroke();
+      g.beginPath(); g.arc(352, 160, 11, 0, 7); g.fillStyle = COL.nerve; g.fill(); g.strokeStyle = '#a67c00'; g.lineWidth = 2; g.stroke();
+      g.strokeStyle = COL.ink; g.lineWidth = 2; g.beginPath(); g.moveTo(410, 112); g.lineTo(410, 160); g.moveTo(402, 112); g.lineTo(418, 112); g.moveTo(402, 160); g.lineTo(418, 160); g.stroke();
+      text(g, '2–3 mm', 398, 200, { fs: 18, w: 700, align: 'right' });
+      text(g, 'buccalis', 70, 60, { fs: 17, w: 600 }); text(g, 'lingualis', 340, 60, { fs: 17, w: 600 });
+      text(g, 'csont', 200, 220, { fs: 18, w: 600, align: 'center' });
+      g.restore(); g.restore();
+    }
+  }
+});
+
+/* ---- 4. Envelope: előny/hátrány ---- */
+scene({
+  chap: '6.1.1', title: 'Az envelope lebeny előnyei és hátrányai',
+  caps: ['A leírt lebenyképzés előnye, hogy a gingivát könnyebben lehet az eredeti helyére visszailleszteni,',
+    'így ritkábban fordul elő a nyálkahártya visszahúzódása a második őrlőfog gyökerénél.',
+    'Hátránya, hogy 2. és 3. nehézségi fokozatú esetekben nem nyújt elegendő teret a csont és a fog eltávolításához.',
+    'A sebkampóval történő lebenyeltartás gyakran a gingiva beszakadását eredményezheti.',
+    'Gyakorlati tapasztalat, hogy a pontos illesztés, szoros sebzárás esetén a műtétet nagyobb mértékű ödéma követheti.',
+    'Ezért a csak gingivalis metszéssel kiegészített lebenytípust csak könnyebb eseteknél alkalmazzuk.'],
+  bullets: [['Könnyű, pontos visszaillesztés', 0], ['Ritkább recesszió a 2. őrlőfog gyökerénél', 1], ['2–3. nehézségi fokozat: kevés tér', 2], ['Sebkampó → gingivaberepedés veszélye', 3], ['Szoros zárás → nagyobb ödéma', 4], ['Döntés: envelope lebeny csak könnyebb esetekben', 5]],
+  draw(s) {
+    const g = ctx;
+    g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+    const card = (x, y, w, h, title, color, items) => {
+      g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.14)'; g.shadowBlur = 16; g.beginPath(); g.roundRect(x, y, w, h, 20); g.fill(); g.shadowColor = 'transparent';
+      g.fillStyle = color; g.beginPath(); g.roundRect(x, y, w, 76, [20, 20, 0, 0]); g.fill();
+      text(g, title, x + 28, y + 40, { fs: 34, w: 800, color: '#fff' });
+      let yy = y + 120;
+      items.forEach(([t, ci]) => {
+        const a = fin(s, ci, .6); if (a <= 0) return;
+        g.save(); g.globalAlpha = a;
+        if (s.ci === ci) { g.fillStyle = 'rgba(255,224,102,.55)'; g.beginPath(); g.roundRect(x + 16, yy - 30, w - 32, 128, 12); g.fill(); }
+        checkBadge(g, x + 52, yy + 6, 1, color === '#2a9d55');
+        const hh = text(g, t, x + 92, yy + 6, { fs: 28, w: 600, maxW: w - 120, lh: 1.3 });
+        g.restore();
+        yy += Math.max(hh, 60) + 46;
+      });
+    };
+    card(40, 40, 540, 500, 'Előny', '#2a9d55', [['Könnyen, pontosan visszailleszthető gingiva', 0], ['Ritkább nyálkahártya-visszahúzódás a 2. őrlőfog gyökerénél', 1]]);
+    card(630, 40, 550, 680, 'Hátrány', '#d1495b', [['2–3. nehézségi fokozatnál nem ad elég teret', 2], ['Sebkampós eltartásnál gyakori a gingiva beszakadása', 3], ['Szoros sebzárás után nagyobb ödéma', 4]]);
+    const a = A(s, 5, 0, .4);
+    if (a > 0) {
+      g.save(); g.globalAlpha = a; g.translate(0, (1 - a) * 20);
+      g.fillStyle = COL.teal; g.beginPath(); g.roundRect(40, 580, 540, 140, 20); g.fill();
+      text(g, 'Csak könnyebb esetekben!', 310, 630, { fs: 32, w: 800, color: '#fff', align: 'center' });
+      text(g, 'Nehezebb esetben: segédmetszéses lebeny', 310, 680, { fs: 24, w: 600, color: '#d9f1f4', align: 'center' });
+      g.restore();
+    }
+  }
+});
+
+/* ---- 5. Segédmetszéses lebeny ---- */
+scene({
+  chap: '6.1.1', title: 'Segédmetszéssel készített lebeny',
+  caps: ['Teljes feltárást a segédmetszéssel készített lebeny biztosít – 6.2. ábra.',
+    'A lebeny a második őrlőfogtól distalisan hasonló az előzőekben leírtakhoz.',
+    'Ezt a fog distalis papillájától előrefelé, hozzávetőlegesen 45 fokban, az áthajlás irányában vezetett segédmetszéssel egészítjük ki.',
+    'A segédmetszés nem hosszabb 15–20 mm-nél: hosszú metszésnél az arteria maxillaris externa kis ágaiból vérzést kaphatunk.',
+    'Ha a bölcsességfog helyzete a második molaris eltávolítását is szükségessé teheti, a segédmetszést az első őrlőfog distalis papillájától vezetjük.',
+    'A megfelelően kialakított lebeny könnyű hozzáférést biztosít, a sebkampót óvatosan lehet használni, esetenként el is lehet hagyni.',
+    'A gyakorlati tapasztalatok szerint a posztoperatív ödémáért elsősorban az erőszakos lágyrész-eltartás okozta szövetroncsolás a felelős.'],
+  bullets: [['Distalis rész: mint az envelope lebenynél', 1], ['Segédmetszés ~45°-ban, előrefelé, az áthajlás irányába', 2], ['Hossz: legfeljebb 15–20 mm (vérzés: a. maxillaris externa ágai)', 3],
+    ['Ha a 2. molaris is eltávolítandó: az 1. őrlőfog distalis papillájától', 4], ['Könnyű hozzáférés, kíméletes sebkampó-használat', 5], ['Ödéma oka: erőszakos lágyrész-eltartás', 6]],
+  draw(s) {
+    const g = ctx;
+    const refl = A(s, 5, .1, .6);
+    const relPts = [DB, REL_END];
+    occBase(g, {
+      under: g => {
+        if (refl > 0) {
+          const edge = [...DISTAL, ...TRI_SULC];
+          const low = edge.map(([x, y]) => [x - refl * 40, y + refl * 190]);
+          const poly1 = [...edge, REL_END, ...low.slice().reverse()];
+          g.save(); g.beginPath(); poly(g, poly1); g.fillStyle = BONE; g.fill(); g.restore();
+          strokePts(g, [...low, REL_END], '#d27b83', 26); strokePts(g, [...low, REL_END], '#f3b9bc', 10);
+          // fog koronája a csont alatt
+        }
+      }
+    });
+    if (refl > 0) {
+      g.save(); g.globalAlpha = refl; g.beginPath(); poly(g, sePoly(OC.m3)); g.setLineDash([10, 8]); g.strokeStyle = 'rgba(90,70,60,.8)'; g.lineWidth = 3; g.stroke(); g.restore();
+    }
+    occLabels(g, fin(s, 0, .8) * (1 - fin(s, 2, .6)), { vest: true, m3: false });
+    const lD = polyLen(DISTAL) + polyLen(TRI_SULC), lT = polyLen(TRI);
+    const pr = A(s, 1, .1, .9) * (lD / lT) + A(s, 2, .15, .7) * (1 - lD / lT);
+    const hd = incision(g, TRI, pr);
+    if (hd && pr < .999) scalpel(g, hd.x, hd.y, hd.ang, .9);
+    if (s.ci >= 2 && refl < 1) {
+      const a = A(s, 2, .6, .85) * (1 - fin(s, 4));
+      g.save(); g.globalAlpha = a; g.strokeStyle = COL.teal; g.lineWidth = 3;
+      g.setLineDash([8, 6]); g.beginPath(); g.moveTo(DB[0], DB[1]); g.lineTo(DB[0] - 150, DB[1]); g.stroke(); g.setLineDash([]);
+      g.lineWidth = 4; g.beginPath(); g.arc(DB[0], DB[1], 90, Math.PI * .75, Math.PI, false); g.stroke(); g.restore();
+      tag(g, '≈ 45°', DB[0] - 150, DB[1] + 50, { a, align: 'c', fs: 26, bold: true, border: COL.teal });
+    }
+    // hossz
+    const la = vis(s, 3, 4);
+    if (la > 0) {
+      g.save(); g.globalAlpha = la; g.strokeStyle = COL.ink; g.lineWidth = 3;
+      const nx = .707, ny = .707, o = 26;
+      g.beginPath(); g.moveTo(DB[0] + nx * o, DB[1] + ny * o); g.lineTo(REL_END[0] + nx * o, REL_END[1] + ny * o); g.stroke(); g.restore();
+      tag(g, 'max. 15–20 mm', 640, 640, { a: la, align: 'l', fs: 26, bold: true, border: COL.ink });
+      g.save(); g.globalAlpha = la * (.6 + .4 * Math.sin(s.t * 5));
+      for (const [x, y] of [[REL_END[0] - 20, REL_END[1] + 20], [REL_END[0] - 50, REL_END[1] + 14]]) { g.fillStyle = '#b3001b'; g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill(); }
+      g.restore();
+      tag(g, 'hosszú metszés → vérzés az a. maxillaris externa ágaiból', 330, 720, { a: la, align: 'c', fs: 21, border: '#b3001b' });
+    }
+    // alternatíva
+    const aa = vis(s, 4, 5);
+    if (aa > 0) {
+      g.save(); g.globalAlpha = aa;
+      incision(g, [...seArc(OC.m2, .55, Math.PI * .86, 7, 30), PAP12], A(s, 4, .1, .45), '#e36414', [12, 9]);
+      incision(g, REL_ALT, A(s, 4, .45, .9), '#e36414', [12, 9]);
+      g.restore();
+      tag(g, 'ha a 2. molaris is eltávolítandó:\naz 1. őrlőfog distalis papillájától', 100, 140, { a: aa, align: 'l', to: PAP12, fs: 22, border: '#e36414' });
+    }
+    // sebkampó és ödéma
+    if (refl > 0) {
+      const hard = A(s, 6, .15, .5);
+      g.save(); g.globalAlpha = refl;
+      retractor(g, 820, 650 + hard * 50, 0, 1);
+      g.restore();
+      tag(g, 'óvatos eltartás – a sebkampó esetenként el is hagyható', 610, 120, { a: vis(s, 5, 6), align: 'c', fs: 22, border: '#2a9d55' });
+      if (hard > 0) {
+        arrow(g, 820, 690, 820, 750, { color: '#d1495b', lw: 8, head: 22, a: hard });
+        g.save(); g.globalAlpha = hard * .45 * (0.7 + .3 * Math.sin(s.t * 4));
+        const rg = g.createRadialGradient(820, 590, 10, 820, 590, 220); rg.addColorStop(0, '#ff3b3b'); rg.addColorStop(1, 'rgba(255,59,59,0)');
+        g.fillStyle = rg; g.fillRect(560, 380, 520, 380); g.restore();
+        tag(g, 'erőszakos eltartás → szövetroncsolás → ödéma', 610, 120, { a: hard, align: 'c', fs: 23, bold: true, border: '#d1495b' });
+        warnBadge(g, 1010, 600, hard);
+      }
+    }
+  }
+});
+
+/* ---- 6. Csonteltávolítás – eszközök ---- */
+scene({
+  chap: '6.1.2', title: 'A csont eltávolítása – eszközök',
+  caps: ['A bölcsességfogak sebészetében az utóbbi években a vésők használatát fokozatosan felváltja a sebészi fúrók alkalmazása.',
+    'Az autoklávozható sebészi kézidarabok, a sebészi mikromotor…',
+    '…valamint a kemény acélból készült gömb- és fissurafúrók a csontsebészet elengedhetetlen kellékei – 6.3. ábra.',
+    'A vésőt, mint kiegészítő eszközt, általában csak a fogak disszekciójával használjuk.',
+    'A csonteltávolítás technikája az eltávolítandó csont mennyiségétől és a foghoz való viszonyától függ.'],
+  bullets: [['Véső → sebészi fúró', 0], ['Autoklávozható kézidarabok + sebészi mikromotor', 1], ['Keményacél gömb- és fissurafúrók', 2], ['Véső: kiegészítő eszköz (disszekció)', 3], ['Technika: a csont mennyisége + a foghoz való viszonya', 4]],
+  draw(s) {
+    const g = ctx;
+    const bg = g.createLinearGradient(0, 0, 0, SH); bg.addColorStop(0, '#3f8a72'); bg.addColorStop(1, '#2d6a57');
+    g.fillStyle = bg; g.fillRect(0, 0, SW, SH);
+    const it = (ci, f, fn) => { const a = A(s, ci, f, f + .3); if (a <= 0) return 0; g.save(); g.globalAlpha = a; g.translate(0, (1 - a) * 30); fn(); g.restore(); return a; };
+    // 0: véső → fúró
+    const swap = A(s, 0, .2, .7);
+    if (s.ci === 0 || s.t < s.cs[1] + .5) {
+      const a0 = 1 - fin(s, 1, .5);
+      g.save(); g.globalAlpha = a0;
+      g.save(); g.globalAlpha *= 1 - swap * .7; chisel(g, 360, 560, 0, 1.1); g.restore();
+      text(g, 'véső', 360, 620, { fs: 28, w: 700, color: '#fff', align: 'center' });
+      arrow(g, 480, 380, 700, 380, { color: '#ffe066', lw: 8, head: 26, a: swap });
+      g.save(); g.globalAlpha *= swap; contraAngle(g, 860, 540, 0, 'round', 1.15); g.restore();
+      text(g, 'sebészi fúró', 900, 620, { fs: 28, w: 700, color: '#fff', align: 'center', a: swap });
+      g.restore();
+    }
+    const L = (t, x, y, a = 1) => { g.save(); g.globalAlpha *= a; g.fillStyle = 'rgba(0,0,0,.35)'; g.font = `700 24px ${FONT}`; const w = g.measureText(t).width + 26; g.beginPath(); g.roundRect(x - w / 2, y - 22, w, 44, 10); g.fill(); g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(t, x, y); g.restore(); };
+    it(1, 0, () => { contraAngle(g, 150, 380, -Math.PI / 2 + .25, 'round', 1); L('könyökdarab', 230, 700); });
+    it(1, .25, () => { straightHP(g, 420, 210, Math.PI, .95); L('egyenes kézidarab', 420, 700); });
+    it(1, .5, () => {
+      g.fillStyle = '#6f7c85'; g.beginPath(); g.roundRect(540, 250, 110, 260, 20); g.fill();
+      g.fillStyle = '#9aa5ab'; g.beginPath(); g.roundRect(552, 262, 86, 70, 10); g.fill();
+      g.fillStyle = '#1b2a31'; g.font = `700 22px ${FONT}`; g.textAlign = 'center'; g.fillText('motor', 595, 300);
+      g.strokeStyle = '#4c575e'; g.lineWidth = 12; g.beginPath(); g.moveTo(595, 510); g.quadraticCurveTo(600, 620, 520, 640); g.stroke();
+      L('mikromotor', 595, 700);
+    });
+    it(2, 0, () => {
+      g.fillStyle = steel(g, 760, 0, 774, 0); g.fillRect(762, 200, 10, 300);
+      const rg = g.createRadialGradient(763, 504, 2, 767, 510, 18); rg.addColorStop(0, '#fff'); rg.addColorStop(1, '#5d676d');
+      g.fillStyle = rg; g.beginPath(); g.arc(767, 512, 17, 0, 7); g.fill();
+      L('gömbfúró', 767, 600);
+    });
+    it(2, .3, () => {
+      g.fillStyle = steel(g, 900, 0, 914, 0); g.fillRect(902, 200, 10, 240);
+      g.beginPath(); g.moveTo(896, 440); g.lineTo(918, 440); g.lineTo(913, 530); g.lineTo(901, 530); g.closePath(); g.fill();
+      g.strokeStyle = 'rgba(60,70,75,.7)'; g.lineWidth = 2; for (let k = 446; k < 528; k += 9) { g.beginPath(); g.moveTo(898, k); g.lineTo(916, k + 6); g.stroke(); }
+      L('fissurafúró', 907, 600);
+    });
+    it(3, 0, () => { chisel(g, 1060, 520, 0, 1); mallet(g, 1140, 220, .5, .7); L('véső (kiegészítő)', 1080, 700); });
+    // 4: kiemelés
+    const a4 = A(s, 4, 0, .3);
+    if (a4 > 0) {
+      g.save(); g.globalAlpha = a4 * .92; g.fillStyle = '#244f43'; g.beginPath(); g.roundRect(160, 90, 900, 120, 18); g.fill(); g.restore();
+      text(g, 'Technika = f (csontmennyiség, a foghoz való viszony)', 610, 150, { fs: 32, w: 700, color: '#fff', align: 'center', a: a4 });
+    }
+  }
+});
+
+/* ---- 7. Mély impactio – perforációk ---- */
+const HOLES = [[548, 478], [545, 432], [556, 390], [588, 362], [630, 352], [672, 362], [704, 390], [715, 432], [712, 478]];
+scene({
+  chap: '6.1.2', title: 'Mély impactio: perforációs technika',
+  caps: ['Mély impactiónál, ha a fog csonttal teljesen fedett, ajánlatos a csonton gömbfúróval perforációkat készíteni.',
+    'Amikor a fúró eléri a fog koronáját, azt jól érezhető ellenállás jelzi.',
+    'A fogat fedő csontot perforációkkal körbefúrjuk…',
+    '…a nyílásokat akár vésővel is összeköthetjük, és így eltávolítjuk a csontlemezt.'],
+  bullets: [['A fogat teljesen csont fedi', 0], ['Gömbfúróval perforációk', 0], ['Érezhető ellenállás = elértük a koronát', 1], ['Körbefúrás, majd összekötés (véső)', 2], ['A fedő csontlemez eltávolítása', 3]],
+  draw(s) {
+    const m3 = tSpec({ x: 630, y: 500, rl: 150, w: 150 });
+    const probe = Al(s, 0, .45, .85);
+    const nH = Al(s, 2, .05, .95) * HOLES.length;
+    const conn = A(s, 3, 0, .5);
+    const lid = A(s, 3, .55, .95);
+    const lidPoly = [...catmull(HOLES, 6), [712, 478]];
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [520, 352], [560, 330], [700, 326], [780, 296], [900, 220], [1060, 120], [1220, 70]],
+      teeth: [tSpec({ x: 175, y: 372, rl: 185, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3],
+      cover: [[536, 300], [730, 300], [730, 510], [536, 510]], coverDash: m3, ging: 470,
+      mask: G => {
+        if (probe > 0) { G.beginPath(); G.arc(630, 420, 12 * clamp(probe * 1.4), 0, 7); G.fill(); }
+        for (let i = 0; i < Math.floor(nH); i++) { G.beginPath(); G.arc(HOLES[i][0], HOLES[i][1], 11, 0, 7); G.fill(); }
+        if (conn > 0) { G.lineWidth = 7; G.beginPath(); poly(G, partial(catmull(HOLES, 6), conn), false); G.stroke(); }
+        if (lid > 0) { G.globalAlpha = lid; G.beginPath(); poly(G, lidPoly); G.fill(); G.globalAlpha = 1; }
+      },
+      over: g => {
+        if (lid > 0 && lid < 1) { g.save(); g.globalAlpha = 1 - lid; g.translate(-30 * lid, -160 * lid); g.beginPath(); poly(g, lidPoly); g.fillStyle = BONE; g.fill(); g.strokeStyle = COL.boneEdge; g.lineWidth = 3; g.stroke(); g.restore(); }
+        // fúró
+        let bp = null;
+        if (s.ci === 0) bp = P([760, 200], [630, 420], A(s, 0, .2, .45));
+        if (s.ci === 1) bp = [630, 420];
+        if (s.ci === 2 && nH < HOLES.length) { const i = Math.min(HOLES.length - 1, Math.floor(nH)); bp = HOLES[i]; }
+        if (bp) { const j = (s.ci === 0 && probe > 0 && probe < 1) || s.ci === 2 ? Math.sin(s.t * 60) * 1.5 : 0; contraAngle(g, bp[0] + j, bp[1], .2, 'round', .9); }
+        if (s.ci === 3 && conn > 0 && conn < 1) { const q = partial(catmull(HOLES, 6), conn); const h = q[q.length - 1]; chisel(g, h[0], h[1], .5, .8); }
+        if (s.ci === 1) { pulse(g, 630, 420, s.t, '#ffb400', 14); star(g, 630, 420, 26, .5 + .5 * Math.sin(s.t * 10)); }
+        tag(g, 'érezhető ellenállás → korona!', 860, 470, { a: vis(s, 1, 2), to: [645, 420], fs: 24, bold: true, border: '#ffb400' });
+        tag(g, 'csont', 980, 560, { a: fin(s, 0) * (1 - fin(s, 1)), fs: 23 });
+        tag(g, 'csonttal teljesen fedett korona (sémás)', 880, 360, { a: fin(s, 0) * (1 - fin(s, 1)), to: [690, 430], fs: 22 });
+        tag(g, '2. moláris', 390, 150, { a: fin(s, 0) * (1 - fin(s, 1)), align: 'c', to: [390, 270], fs: 22 });
+        tag(g, 'perforációk', 860, 220, { a: vis(s, 2, 3), to: [672, 362], fs: 23 });
+        tag(g, 'csontlemez eltávolítva – a korona szabad', 900, 300, { a: A(s, 3, .8, 1), to: [660, 400], fs: 23, border: '#2a9d55' });
+      }
+    });
+  }
+});
+
+/* ---- 8. Korona felszabadítása ---- */
+scene({
+  chap: '6.1.2', title: 'A korona felszabadítása',
+  caps: ['A fog koronájának felszabadításakor a fog körül gömbfúróval először széles árkot készítünk…',
+    '…majd a korona mellett haladva fissurafúróval mélyítjük azt – 6.4. és 6.5. ábra.',
+    'A koronát a zománc-cement határig szabaddá kell tenni.',
+    'A gyökerek esetében is hasonló technikát alkalmazunk.'],
+  bullets: [['1. Gömbfúró: széles árok a fog körül', 0], ['2. Fissurafúró: mélyítés a korona mellett', 1], ['Cél: a korona szabad a zománc-cement határig', 2], ['Gyökereknél: hasonló technika', 3]],
+  draw(s) {
+    const m3 = tSpec({ x: 630, y: 470, rl: 165 });
+    const P1 = [[548, 395], [548, 432], [575, 428], [630, 428], [685, 428], [712, 432], [712, 395]];
+    const P2 = [[546, 420], [546, 498], [552, 470], [600, 466], [660, 466], [708, 470], [714, 498], [714, 420]];
+    const p1 = A(s, 0, .2, .95), p2 = A(s, 1, .15, .95), p3 = A(s, 2, .1, .6);
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [530, 402], [560, 408], [700, 404], [760, 370], [880, 250], [1050, 130], [1220, 80]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3],
+      cover: [[540, 395], [722, 395], [722, 520], [540, 520]], coverDash: m3, ging: 470,
+      mask: G => {
+        if (p1 > 0) { G.lineWidth = 30; G.beginPath(); poly(G, partial(P1, p1), false); G.stroke(); }
+        if (p2 > 0) { G.lineWidth = 18; G.beginPath(); poly(G, partial(P2, p2), false); G.stroke(); }
+        if (p3 > 0) { G.save(); G.beginPath(); G.rect(540, 380, 182 * p3, 96); G.fill(); G.restore(); }
+        if (s.ci >= 3) { const q = A(s, 3, .1, .8); G.lineWidth = 14; G.beginPath(); poly(G, partial([[546, 490], [550, 560], [560, 600]], q), false); G.stroke(); G.beginPath(); poly(G, partial([[714, 490], [710, 560], [700, 600]], q), false); G.stroke(); }
+      },
+      over: g => {
+        if (s.ci === 0 && p1 > 0 && p1 < 1) { const q = partial(P1, p1); const h = q[q.length - 1]; contraAngle(g, h[0] + Math.sin(s.t * 60), h[1], .2, 'round', .9); }
+        if (s.ci === 1 && p2 > 0 && p2 < 1) { const q = partial(P2, p2); const h = q[q.length - 1]; contraAngle(g, h[0] + Math.sin(s.t * 60), h[1], .2, 'fissure', .9); }
+        tag(g, 'gömbfúró – széles árok', 880, 470, { a: vis(s, 0, 1), to: [712, 420], fs: 23 });
+        tag(g, 'fissurafúró – mélyítés a korona mellett', 880, 520, { a: vis(s, 1, 2), to: [714, 470], fs: 23 });
+        const ca = fin(s, 2, .6);
+        if (ca > 0) {
+          g.save(); g.globalAlpha = ca; toothXf(g, m3, null);
+          g.strokeStyle = COL.hl; g.lineWidth = 8; g.beginPath(); g.moveTo(-66, 0); g.quadraticCurveTo(0, 9, 66, 0); g.stroke(); g.restore();
+          tag(g, 'zománc-cement határ', 880, 560, { a: ca, to: [700, 472], fs: 24, bold: true, border: '#e0b000' });
+        }
+        tag(g, 'a gyökerek mentén is hasonlóan', 860, 640, { a: fin(s, 3), to: [712, 560], fs: 22 });
+      }
+    });
+  }
+});
+
+/* ---- 9. Disszekció ---- */
+scene({
+  chap: '6.1.3', title: 'A fog disszekciója',
+  caps: ['Az alsó bölcsességfogakat alakjuk és anatómiai helyzetük miatt ritkán tudjuk egészben eltávolítani.',
+    'A műtét során általában szükség van a korona, a gyökerek elvágására, szétválasztására.',
+    'Régebben az emelők erőszakos használata gyakran komoly szövődményeket okozott: az ép második molaris elvesztését, vagy akár az állkapocs törését.',
+    'Az alsó bölcsességfog eltávolításának „művészete”, a minimálisan traumatizáló műtét titka a fog megfelelő részén végzett disszekcióban rejlik.',
+    'A disszekciót általában gyorsító áttétellel ellátott sebészi könyökdarabbal, gyémántbevonatú vagy keményacél kúpos fissurafúróval végezzük.',
+    'Gondosan ügyelünk az állandó hűtésre és a művelet során keletkező fogtörmelék elszívására. A vésőt kiegészítő eszközként alkalmazhatjuk.'],
+  bullets: [['Ritkán távolítható el egészben', 0], ['A korona és a gyökerek elvágása, szétválasztása', 1], ['Erőszakos emelés: a 2. molaris elvesztése, állkapocstörés!', 2], ['Minimális trauma = jó helyen végzett disszekció', 3], ['Gyorsító könyökdarab + kúpos fissurafúró', 4], ['Állandó hűtés + a törmelék elszívása', 5]],
+  draw(s) {
+    const old = vis(s, 2, 3);
+    const lift = s.ci === 0 ? Math.max(0, Math.sin(clamp(Al(s, 0, .3, .9)) * Math.PI * 3)) * 10 : 0;
+    const m3 = tSpec({ x: 600, y: 440, rl: 175, dy: -lift });
+    const m2 = tSpec({ x: 390, y: 372, rl: 180, rot: -old * .1 * A(s, 2, .1, .5), pv: [0, 180] });
+    const cut = A(s, 4, .3, .95) + (s.ci > 4 ? 0 : 0);
+    m3.deco = g => {
+      const da = vis(s, 1, 2) + (s.ci === 3 ? fin(s, 3) : 0);
+      if (da > 0) { g.save(); g.globalAlpha = Math.min(1, da) * (.6 + .4 * Math.sin(s.t * 4)); g.setLineDash([10, 8]); g.strokeStyle = COL.inc; g.lineWidth = 4; g.beginPath(); g.moveTo(0, -125); g.lineTo(0, 60); g.moveTo(-80, 4); g.lineTo(80, 4); g.stroke(); g.restore(); }
+      if (cut > 0) { g.save(); g.strokeStyle = '#5b2b2e'; g.lineWidth = 9; g.lineCap = 'round'; g.beginPath(); g.moveTo(0, -122); g.lineTo(0, lerp(-122, 50, cut)); g.stroke(); g.restore(); }
+    };
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [510, 450], [690, 455], [720, 420], [760, 360], [880, 250], [1050, 130], [1220, 80]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), m2, m3], ging: 470,
+      mask: G => { G.beginPath(); poly(G, [[500, 380], [700, 380], [700, 462], [500, 462]]); G.fill(); },
+      over: g => {
+        tag(g, 'egyben: ütközik a 2. molarisnak és a ramusnak', 860, 160, { a: vis(s, 0, 1), to: [520, 360], fs: 22, maxW: 330 });
+        if (s.ci === 0) { checkBadge(g, 600, 250, fin(s, 0, 1) * A(s, 0, .5, .8), false); }
+        tag(g, 'disszekciós vonalak', 860, 300, { a: vis(s, 1, 2), to: [600, 360], fs: 23, border: COL.inc });
+        if (old > 0) {
+          const f = A(s, 2, .1, .5);
+          g.save(); g.globalAlpha = old; lecluse(g, 520, 345, -.3 - f * .25, 1); g.restore();
+          arrow(g, 560, 230, 470, 260, { color: '#d1495b', lw: 9, head: 26, a: old });
+          strokePts(g, partial([[560, 640], [575, 680], [552, 705], [570, 740], [560, 762]], A(s, 2, .35, .7)), '#d1495b', 6);
+          g.save(); g.globalAlpha = old; g.fillStyle = 'rgba(209,73,91,.12)'; g.fillRect(0, 0, SW, SH); g.restore();
+          tag(g, 'RÉGEN: erőszakos emelés', 950, 140, { a: old, align: 'c', fs: 28, bold: true, color: '#fff', bg: '#d1495b' });
+          tag(g, 'a 2. molaris elvesztése', 860, 230, { a: old * A(s, 2, .2, .4), to: [380, 260], fs: 23 });
+          tag(g, 'állkapocstörés', 860, 690, { a: old * A(s, 2, .5, .7), to: [570, 700], fs: 23 });
+        }
+        tag(g, 'a fog megfelelő részén végzett disszekció = minimális trauma', 610, 90, { a: vis(s, 3, 4), align: 'c', fs: 24, bold: true, border: '#2a9d55' });
+        const ba = fin(s, 4, .6);
+        if (ba > 0) {
+          const y = lerp(320, 492, cut);
+          g.save(); g.globalAlpha = ba; contraAngle(g, 600 + Math.sin(s.t * 70) * 1.2, y, .25, 'fissure', .95); g.restore();
+          tag(g, 'gyorsító könyökdarab + kúpos fissurafúró', 860, 200, { a: vis(s, 4, 5), fs: 23 });
+        }
+        if (s.ci >= 5) {
+          const a = fin(s, 5); const r = rng(11);
+          const y = lerp(320, 492, cut);
+          g.save(); g.globalAlpha = a;
+          for (let i = 0; i < 60; i++) {
+            const ph = (s.t * 1.6 + r()) % 1; const ang = -2.1 + r() * 1.1;
+            const x = 600 + Math.cos(ang) * ph * 160 + 20, yy = y - 80 + Math.sin(ang) * -ph * 40 + ph * ph * 140;
+            g.fillStyle = `rgba(90,170,230,${.75 * (1 - ph)})`; g.beginPath(); g.arc(x - 60, yy, 3 + r() * 3, 0, 7); g.fill();
+          }
+          for (let i = 0; i < 18; i++) { const ph = (s.t * 1.2 + r()) % 1; const x = lerp(606, 760, ph), yy = lerp(430, 300, ph) + Math.sin(i + s.t * 6) * 8; g.fillStyle = `rgba(240,230,210,${1 - ph})`; g.fillRect(x, yy, 4, 4); }
+          suction(g, 760, 300, 0, 1);
+          g.restore();
+          tag(g, 'állandó hűtés', 330, 150, { a, fs: 23, border: '#5aaae6' });
+          tag(g, 'elszívás', 1060, 300, { a, fs: 23 });
+        }
+      }
+    });
+  }
+});
+
+/* ---- 10. Korona átvágása, n. lingualis ---- */
+scene({
+  chap: '6.1.3', title: 'A korona átvágása – a n. lingualis védelme',
+  caps: ['A fog koronáját 4/5 részben fúróval átvágjuk…',
+    '…majd vésővel, kis kalapácsütéssel szétrepesztjük.',
+    'Ezt különösen a fog lingualis részének átvágásánál ajánljuk.',
+    'A fúró túlvezetésével ugyanis a vékony lingualis csontlemez átvágása után megsérthetjük a n. lingualist.',
+    'Ezt elkerülhetjük, ha a lingualis nyálkahártya alá, szorosan a csonthoz tapasztva, raspatóriummal védjük a lágyrészeket.'],
+  bullets: [['A korona 4/5 részét fúróval átvágjuk', 0], ['A maradékot vésővel, kis kalapácsütéssel repesztjük', 1], ['Főleg a lingualis résznél ajánlott', 2], ['Túlvezetett fúró → a lingualis csontlemez és a n. lingualis sérülése', 3], ['Védelem: raspatórium a lingualis nyálkahártya alatt, a csonthoz simítva', 4]],
+  draw(s) {
+    const g = ctx;
+    g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+    // bal panel: felülnézet
+    g.save();
+    g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.12)'; g.shadowBlur = 12; g.beginPath(); g.roundRect(20, 20, 560, 720, 18); g.fill(); g.shadowColor = 'transparent';
+    text(g, 'Felülnézet: a korona', 300, 56, { fs: 26, w: 700, align: 'center', color: COL.teal });
+    const T = { x: 300, y: 400, a: 200, b: 175 };
+    const cut = A(s, 0, .1, .85);
+    const split = A(s, 1, .55, .9);
+    const yB = T.y + T.b, yL = T.y - T.b, yStop = lerp(yB, yL, .8);
+    for (const sg of [-1, 1]) {
+      g.save(); g.beginPath(); g.rect(sg < 0 ? 0 : 300, 0, 300, 800); g.clip(); g.translate(sg * split * 16, 0);
+      occTooth(g, T); g.restore();
+    }
+    if (cut > 0) strokePts(g, [[300, yB + 4], [300, lerp(yB + 4, yStop, cut)]], '#5b2b2e', 14);
+    if (s.ci === 0 && cut < 1) contraAngle(g, 300, lerp(yB + 4, yStop, cut), 0, 'fissure', .7);
+    if (s.ci >= 1) {
+      g.save(); g.setLineDash([6, 6]); g.strokeStyle = '#5b2b2e'; g.lineWidth = 3; g.beginPath(); g.moveTo(300, yStop); g.lineTo(300, yL); g.stroke(); g.restore();
+      const hit = Al(s, 1, .15, .55); const tap = Math.abs(Math.sin(hit * Math.PI * 3));
+      if (hit > 0 && hit < 1) { chisel(g, 300, yB - 20, 0, .7); mallet(g, 300 + 60 - tap * 30, yB + 80 - tap * 0, -1.0, .45); star(g, 300, yB + 30, 18, tap); }
+      if (split > 0) { strokePts(g, [[300, yStop], [296, yStop - 15], [304, yStop - 30], [298, lerp(yStop, yL, split)]], '#5b2b2e', 4); }
+    }
+    text(g, 'lingualis', 300, 200, { fs: 21, w: 700, align: 'center' });
+    text(g, 'buccalis', 300, 610, { fs: 21, w: 700, align: 'center' });
+    tag(g, '4/5 fúróval', 470, 470, { a: fin(s, 0) * (1 - fin(s, 1)), fs: 22, align: 'c' });
+    tag(g, '1/5 vésővel', 470, 300, { a: vis(s, 1, 2), fs: 22, align: 'c' });
+    g.restore();
+    // jobb panel: keresztmetszet
+    g.save(); g.translate(600, 0);
+    g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.12)'; g.shadowBlur = 12; g.beginPath(); g.roundRect(0, 20, 600, 720, 18); g.fill(); g.shadowColor = 'transparent';
+    text(g, 'Keresztmetszet (bucco-lingualis)', 300, 56, { fs: 26, w: 700, align: 'center', color: COL.teal });
+    g.beginPath(); g.roundRect(10, 80, 580, 650, 14); g.clip();
+    // lágyrész
+    g.fillStyle = '#f7d6d6'; g.beginPath(); poly(g, [[420, 380], [520, 360], [600, 400], [600, 740], [470, 740]]); g.fill();
+    g.fillStyle = '#f1aeb2'; g.beginPath(); poly(g, [[440, 372], [470, 372], [520, 420], [540, 740], [512, 740], [494, 430], [458, 392]]); g.fill();
+    // csont
+    g.beginPath(); poly(g, [[60, 740], [80, 470], [120, 420], [190, 404], [430, 398], [452, 410], [466, 520], [480, 740]]); g.fillStyle = BONE; g.fill(); g.strokeStyle = COL.boneEdge; g.lineWidth = 4; g.stroke();
+    // fog
+    const tp = new Path2D();
+    tp.moveTo(200, 395); tp.bezierCurveTo(186, 340, 196, 290, 222, 268); tp.quadraticCurveTo(260, 245, 290, 280); tp.quadraticCurveTo(310, 292, 330, 280); tp.quadraticCurveTo(375, 248, 410, 280);
+    tp.bezierCurveTo(432, 300, 432, 350, 420, 395); tp.bezierCurveTo(410, 480, 360, 580, 318, 640); tp.quadraticCurveTo(306, 652, 296, 640); tp.bezierCurveTo(250, 570, 214, 480, 200, 395); tp.closePath();
+    g.fillStyle = '#f7f1e3'; g.fill(tp); g.strokeStyle = COL.enamelEdge; g.lineWidth = 3; g.stroke(tp);
+    g.strokeStyle = 'rgba(150,130,100,.5)'; g.lineWidth = 2; g.beginPath(); g.moveTo(202, 395); g.quadraticCurveTo(310, 410, 420, 395); g.stroke();
+    // ideg
+    const danger = vis(s, 3, 4);
+    g.beginPath(); g.arc(482, 452, 13, 0, 7); g.fillStyle = danger > 0 && A(s, 3, .6, .8) > 0 ? '#ff4d4d' : COL.nerve; g.fill(); g.strokeStyle = '#a67c00'; g.lineWidth = 2; g.stroke();
+    // vágás
+    const prot = fin(s, 4, .6);
+    let reach = lerp(210, 210 + (420 - 210) * .8, cut);
+    if (s.ci >= 3) reach = s.ci === 3 ? lerp(378, 500, A(s, 3, .1, .6)) : lerp(378, 445, A(s, 4, .5, .9));
+    if (cut > 0) { g.save(); g.beginPath(); g.rect(205, 255, reach - 205, 150); g.clip(); g.fillStyle = 'rgba(91,43,46,.5)'; g.fill(tp); g.restore(); g.save(); g.strokeStyle = 'rgba(91,43,46,.95)'; g.lineWidth = 5; g.beginPath(); g.moveTo(Math.min(reach, 425), 262); g.lineTo(Math.min(reach, 425), 400); g.stroke(); g.restore(); }
+    if (s.ci === 3 && reach > 440) { g.save(); g.fillStyle = 'rgba(209,73,91,.9)'; g.fillRect(438, 398, reach - 438, 40); g.restore(); }
+    if (prot > 0) {
+      g.save(); g.globalAlpha = prot;
+      g.fillStyle = steel(g, 452, 0, 462, 0); g.beginPath(); poly(g, [[452, 330], [462, 330], [476, 560], [466, 560]]); g.fill();
+      g.strokeStyle = '#5a6c78'; g.lineWidth = 10; g.beginPath(); g.moveTo(457, 330); g.lineTo(560, 120); g.stroke();
+      g.restore();
+    }
+    const bx = Math.min(reach, prot > 0 ? 450 : 999);
+    if (cut > 0 && (s.ci === 0 || s.ci >= 3)) { g.save(); g.translate(bx, 0); g.fillStyle = steel(g, -7, 0, 7, 0); g.fillRect(-6, 230, 12, 200); g.fillStyle = '#7f8b93'; g.fillRect(-14, 140, 28, 92); g.restore(); }
+    if (s.ci === 4 && A(s, 4, .85, 1) > 0) star(g, 452, 410, 18, A(s, 4, .85, 1));
+    g.restore();
+    tag(g, 'vékony lingualis csontlemez', 880, 650, { align: 'c', a: fin(s, 2) * (1 - fin(s, 4)), to: [1062, 470], fs: 22 });
+    tag(g, 'n. lingualis', 1170, 330, { a: fin(s, 2), align: 'r', to: [1082, 452], fs: 23, bold: true, border: COL.nerve });
+    tag(g, 'túlvezetett fúró → idegsérülés!', 900, 140, { a: danger, align: 'c', fs: 25, bold: true, color: '#fff', bg: '#d1495b' });
+    tag(g, 'raspatórium a nyálkahártya alatt, a csonthoz simítva', 900, 140, { a: prot, align: 'c', fs: 22, bold: true, border: '#2a9d55', maxW: 520 });
+    if (prot > 0) checkBadge(g, 1150, 520, A(s, 4, .85, 1));
+  }
+});
+
+/* ---- 11. Verticalis helyzet ---- */
+const M3V = () => tSpec({ x: 548, y: 392, rl: 160, roots: 'conical' });
+scene({
+  chap: '6.1.4', title: 'Verticalis helyzetű bölcsességfog',
+  caps: ['A verticalis helyzetű fog eltávolításának menetét a már említett nehézségi fokozatok határozzák meg.',
+    'A fog koronáját a buccalis oldalon, a zománc-cement határig szabaddá tesszük.',
+    'Vigyáznunk kell a csont eltávolításánál, mert a verticalis helyzetű fog általában nagy felületen, szoros kapcsolatban lehet a második őrlőfoggal.',
+    'A csont eltávolítását, ha ezt az anatómiai helyzet, a ramus viszonya engedi, a distalis felszín mentén is folytathatjuk.'],
+  bullets: [['A menetet a nehézségi fokozat határozza meg', 0], ['Buccalisan: a korona szabaddá tétele a zománc-cement határig', 1], ['Vigyázat: széles, szoros kontaktus a 2. őrlőfoggal', 2], ['Ha a ramus engedi: csonteltávolítás distalisan is', 3]],
+  draw(s) {
+    const m3 = M3V();
+    const p1 = A(s, 1, .15, .9), p3 = A(s, 3, .15, .9);
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [478, 352], [622, 346], [640, 280], [720, 220], [880, 150], [1050, 100], [1220, 60]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3],
+      cover: [[470, 340], [628, 340], [628, 418], [470, 418]], coverDash: m3, ging: 468,
+      mask: G => {
+        if (p1 > 0) { G.beginPath(); G.rect(474, 340, 150 * p1, 66); G.fill(); }
+        if (p3 > 0) { G.beginPath(); poly(G, [[620, 280], [660, 260], [670, lerp(260, 430, p3)], [622, lerp(280, 420, p3)]]); G.fill(); }
+      },
+      over: g => {
+        tag(g, 'verticalis helyzet', 860, 520, { a: vis(s, 0, 1), to: [600, 470], fs: 24 });
+        if (s.ci === 1 && p1 < 1) contraAngle(g, 474 + 150 * p1, 380 + Math.sin(s.t * 60), .2, 'round', .85);
+        tag(g, 'buccalisan a zománc-cement határig', 860, 470, { a: vis(s, 1, 2), to: [600, 395], fs: 23 });
+        const ca = vis(s, 2, 3);
+        if (ca > 0) {
+          g.save(); g.globalAlpha = ca * (.55 + .45 * Math.sin(s.t * 5));
+          const rg = g.createRadialGradient(470, 320, 4, 470, 320, 70); rg.addColorStop(0, 'rgba(255,60,60,.9)'); rg.addColorStop(1, 'rgba(255,60,60,0)');
+          g.fillStyle = rg; g.fillRect(380, 230, 180, 180); g.restore();
+          tag(g, 'nagy felületű, szoros kontaktus a 2. őrlőfoggal', 610, 120, { a: ca, align: 'c', to: [470, 300], fs: 24, bold: true, border: '#d1495b' });
+          warnBadge(g, 470, 200, ca);
+        }
+        if (s.ci === 3 && p3 < 1) contraAngle(g, 646, lerp(270, 420, p3) + Math.sin(s.t * 60), .15, 'fissure', .85);
+        tag(g, 'distalis csonteltávolítás (ha a ramus engedi)', 880, 300, { a: fin(s, 3), to: [650, 340], fs: 23, maxW: 330 });
+        tag(g, 'ramus', 1100, 200, { a: fin(s, 3), fs: 22 });
+      }
+    });
+  }
+});
+
+/* ---- 12. Barry-emelő ---- */
+scene({
+  chap: '6.1.4', title: 'Kúpos, összetartó gyökerek – Barry-féle emelő',
+  caps: ['Ha a fognak kúpos, összetartó gyökerei vannak, a zománc-cement határon a koronába gömbfúróval lyukat fúrunk.',
+    'Ez lesz az emelő applikációs, más néven retenciós pontja.',
+    'Ide helyezhetjük a karom formájú emelőt úgy, hogy az emelő működő része a csontszélen támaszkodjon.',
+    'A verticalis irányú emelés sikeresen megmozdíthatja vagy el is távolíthatja a fogat – 6.8. ábra: Barry-féle emelő.'],
+  bullets: [['Kúpos, összetartó gyökerek', 0], ['Lyuk gömbfúróval a zománc-cement határon', 0], ['Applikációs / retenciós pont', 1], ['Karom formájú (Barry-féle) emelő – támasz a csontszélen', 2], ['Verticalis irányú emelés', 3]],
+  draw(s) {
+    const m3 = M3V();
+    const hole = A(s, 0, .4, .85);
+    const rot = A(s, 3, .1, .8);
+    const ful = [516, 410];
+    const tip0 = [520, 384];
+    const ang = -rot * .5;
+    const rp = (p) => { const dx = p[0] - ful[0], dy = p[1] - ful[1]; return [ful[0] + dx * Math.cos(ang) - dy * Math.sin(ang), ful[1] + dx * Math.sin(ang) + dy * Math.cos(ang)]; };
+    const tip = rp(tip0);
+    m3.dy = -rot * 140;
+    m3.deco = g => { if (hole > 0) { g.fillStyle = '#5b2b2e'; g.beginPath(); g.arc(-28, -8, 11 * hole, 0, 7); g.fill(); } };
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [478, 410], [622, 412], [670, 430], [670, 280], [720, 220], [880, 150], [1050, 100], [1220, 60]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3], ging: 468,
+      mask: G => { G.beginPath(); poly(G, [[474, 340], [670, 280], [670, 430], [474, 412]]); G.fill(); G.beginPath(); poly(G, [[620, 280], [670, 260], [670, 430], [622, 420]]); G.fill(); toothShape(G, M3V(), true); },
+      over: g => {
+        if (s.ci === 0 && hole < 1) contraAngle(g, 520 + Math.sin(s.t * 60), 384, .2, 'round', .85);
+        tag(g, 'kúpos, összetartó gyökerek', 860, 560, { a: vis(s, 0, 2), to: [560, 520], fs: 23 });
+        if (s.ci === 1) pulse(g, 520, 384, s.t, '#ffb400', 12);
+        tag(g, 'applikációs (retenciós) pont – a zománc-cement határon', 860, 300, { a: vis(s, 1, 3), to: [530, 384], fs: 23, maxW: 340, border: '#ffb400' });
+        const ea = fin(s, 2, .6);
+        if (ea > 0) {
+          g.save(); g.globalAlpha = ea;
+          barry(g, tip0[0], tip0[1] + m3.dy, -.15 - rot * .35, 1); g.restore();
+          if (s.ci === 2) pulse(g, ful[0], ful[1] + 6, s.t, '#2a9d55', 8);
+          tag(g, 'támaszpont: a csontszél', 200, 560, { a: vis(s, 2, 3), to: [ful[0] - 4, ful[1] + 8], fs: 23, border: '#2a9d55' });
+          tag(g, 'Barry-féle (karom formájú) emelő', 160, 680, { a: ea, fs: 22 });
+        }
+        if (rot > 0) arrow(g, 760, 360, 760, 360 - 150 * rot, { color: COL.teal, lw: 9, head: 26 });
+        tag(g, 'verticalis irányú emelés', 800, 200, { a: fin(s, 3), fs: 25, bold: true, border: COL.teal });
+      }
+    });
+  }
+});
+
+/* ---- 13. Lecluse – distalisan hajlott gyökerek ---- */
+scene({
+  chap: '6.1.4', title: 'Distalisan hajlott gyökerek – Lecluse-emelő',
+  caps: ['Ha a fognak egyirányban, distalisan hajlott gyökerei vannak, a korona mesialis részén, a második molarison támaszkodó Lecluse-típusú emelőt használhatjuk.',
+    'Ennek feltétele a korona distalis részének kiszabadítása.',
+    'Ha ez túl nagy csonteltávolítással járna, akkor a korona distalis csücskét disszekáljuk – 6.9. ábra.',
+    'Ezután az emelővel a fog a gyökerek görbületének irányában, distalisan kifordítható.'],
+  bullets: [['Egyirányban, distalisan hajlott gyökerek', 0], ['Lecluse-emelő: a korona mesialis részén, támasz a 2. molarison', 0], ['Feltétel: a korona distalis részének kiszabadítása', 1], ['Ha ez túl sok csontot igényelne: a distalis csücsök disszekciója', 2], ['Kifordítás a gyökérgörbület irányában', 3]],
+  draw(s) {
+    const m3 = tSpec({ x: 552, y: 398, rl: 170, roots: 'curvedD' });
+    const bone1 = A(s, 1, .15, .8);
+    const cutP = A(s, 2, .1, .5), rem = A(s, 2, .55, .95);
+    const rot = A(s, 3, .15, .95);
+    const Pp = [24, -125], Qq = [88, -22];
+    const ext = (a, b, k) => [a[0] + (a[0] - b[0]) * k, a[1] + (a[1] - b[1]) * k];
+    const Pe = ext(Pp, Qq, .6), Qe = ext(Qq, Pp, .4);
+    const cuspPoly = [Pe, [300, -400], [300, Qe[1]], Qe];
+    const mainPoly = [[-300, -400], Pe, Qe, [300, Qe[1]], [300, 500], [-300, 500]];
+    m3.rot = rot * .42; m3.pv = [170, 40]; m3.dy = -rot * 120;
+    m3.pieces = [{ clip: mainPoly }, { clip: cuspPoly, dx: rem * 60, dy: -rem * 220, rot: rem * .5, pv: [70, -80], alpha: 1 - rem }];
+    m3.deco = (g, pc) => {
+      if (pc && pc.clip === cuspPoly) return;
+      if (cutP > 0) { strokePts(g, [Pp, P(Pp, Qq, cutP)], '#5b2b2e', 7); }
+    };
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [478, 410], [585, 412], [600, 300], [640, 255], [760, 190], [1000, 110], [1220, 60]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3], ging: 468,
+      cover: [[596, 310], [645, 252], [700, 240], [700, 420], [596, 420]], coverDash: tSpec({ x: 552, y: 398 }),
+      mask: G => {
+        G.beginPath(); poly(G, [[474, 330], [600, 300], [600, 420], [474, 412]]); G.fill();
+        if (bone1 > 0) { G.beginPath(); poly(G, [[600, 300], [642, 255], [lerp(642, 690, bone1), 250], [lerp(600, 680, bone1), 420], [600, 420]]); G.fill(); }
+        if (rot > 0) { G.globalAlpha = clamp(rot * 3); toothShape(G, tSpec({ x: 552, y: 398, rl: 170, roots: 'curvedD' })); G.globalAlpha = 1; }
+      },
+      over: g => {
+        // görbület
+        tag(g, 'distalisan hajlott gyökerek', 870, 600, { a: vis(s, 0, 2), to: [640, 540], fs: 23 });
+        const la = s.ci === 0 ? fin(s, 0, .8) : (s.ci === 3 ? 1 : 0);
+        if (la > 0) {
+          const wob = s.ci === 3 ? rot * .25 : 0;
+          g.save(); g.globalAlpha = la; lecluse(g, 475, 330 + wob * 40, -.12 - wob, 1); g.restore();
+          tag(g, 'Lecluse-emelő: a korona mesialis részén, támasz a 2. molarison', 120, 120, { a: la * (s.ci === 0 ? 1 : 1 - rot), to: [476, 320], fs: 22, maxW: 360 });
+        }
+        if (s.ci === 1 && bone1 > 0 && bone1 < 1) contraAngle(g, lerp(620, 670, bone1), 330 + Math.sin(s.t * 60), .2, 'round', .85);
+        tag(g, 'a korona distalis részének kiszabadítása', 880, 250, { a: vis(s, 1, 2), to: [640, 330], fs: 23, maxW: 320 });
+        if (s.ci === 2 && cutP > 0 && cutP < 1) { const h = P(Pp, Qq, cutP); contraAngle(g, m3.x + h[0], m3.y + h[1] + Math.sin(s.t * 60), -.4, 'fissure', .85); }
+        tag(g, 'alternatíva: a distalis csücsök disszekciója', 880, 250, { a: vis(s, 2, 3), to: [620, 330], fs: 23, maxW: 320, border: '#e36414' });
+        if (rot > 0) carrow(g, catmull([[560, 250], [640, 200], [720, 210]], 8), { color: COL.teal, lw: 8, head: 24, a: Math.min(1, rot * 3) });
+        tag(g, 'kifordítás a gyökérgörbület irányában', 880, 140, { a: fin(s, 3), fs: 24, bold: true, border: COL.teal, maxW: 320 });
+      }
+    });
+  }
+});
+
+/* ---- 14. Különálló gyökerek ---- */
+scene({
+  chap: '6.1.4', title: 'Különálló gyökerek',
+  caps: ['Ha a fognak különálló gyökerei vannak, a gyökerek szétválasztásával is segíthetjük a fog eltávolítását.',
+    'A gyökereket külön-külön, lehetőleg a görbületük íve mentén kifejtett erőhatással, emelővel távolítjuk el – 6.10. és 6.11. ábra.'],
+  bullets: [['Különálló gyökerek → szétválasztás', 0], ['Gyökerenként, külön-külön eltávolítás', 1], ['Erőkifejtés a görbület íve mentén, emelővel', 1]],
+  draw(s) {
+    const m3 = tSpec({ x: 570, y: 420, rl: 180, roots: 'separate' });
+    const cut = A(s, 0, .3, .9);
+    const d = A(s, 1, .1, .5), m = A(s, 1, .55, .95);
+    m3.pieces = [
+      { clip: [[0, -300], [300, -300], [300, 400], [0, 400]], rot: d * .45, pv: [150, 40], dy: -d * 140, alpha: 1 - clamp((d - .8) * 5) },
+      { clip: [[-300, -300], [0, -300], [0, 400], [-300, 400]], rot: -m * .35, pv: [-150, 60], dy: -m * 150, dx: m * 40, alpha: 1 - clamp((m - .8) * 5) }
+    ];
+    m3.deco = g => { if (cut > 0) strokePts(g, [[0, -125], [0, lerp(-125, 56, cut)]], '#5b2b2e', 9); };
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], [478, 432], [662, 432], [690, 300], [760, 220], [880, 160], [1050, 100], [1220, 60]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 }), m3], ging: 468,
+      mask: G => { G.beginPath(); poly(G, [[480, 330], [690, 300], [690, 440], [480, 440]]); G.fill(); if (d > 0) { G.globalAlpha = d; toothShape(G, tSpec({ x: 570, y: 420, rl: 180, roots: 'separate' })); } },
+      over: g => {
+        if (s.ci === 0 && cut > 0 && cut < 1) contraAngle(g, 570 + Math.sin(s.t * 60), 420 + lerp(-125, 56, cut), .2, 'fissure', .85);
+        tag(g, 'szétválasztás a furcatióig', 880, 300, { a: vis(s, 0, 1), to: [575, 440], fs: 23 });
+        if (d > 0 && d < 1) carrow(g, catmull([[680, 470], [760, 380], [770, 280]], 8), { color: COL.teal, lw: 7, head: 22 });
+        if (m > 0 && m < 1) carrow(g, catmull([[520, 470], [520, 360], [580, 270]], 8), { color: COL.teal, lw: 7, head: 22 });
+        tag(g, 'gyökerenként, a görbület íve mentén', 880, 200, { a: fin(s, 1), fs: 24, bold: true, border: COL.teal });
+      }
+    });
+  }
+});
+
+/* ---- 15. Sebrevízió ---- */
+scene({
+  chap: '6.1.8', title: 'A seb zárása – sebrevízió',
+  caps: ['A bölcsességfog eltávolítása után alapos sebrevíziót végzünk.',
+    'Fiziológiás sóoldattal átöblítjük a csontüreget, az éles csontszéleket elsimítjuk…',
+    '…és meggyőződünk róla, hogy a sebből mindent eltávolítottunk.',
+    'Külön figyelmet fordítunk a fogzacskó maradványának eltávolítására – 6.16. ábra.',
+    'Ezt a hámszövet-maradványt a bölcsességfog nyaki részén találjuk; sokszor a második őrlőfog distalis septumához tapad.',
+    'Bennhagyása cysta, esetleg tumor kialakulásához vezethet.'],
+  bullets: [['Alapos sebrevízió', 0], ['Öblítés fiziológiás sóoldattal', 1], ['Éles csontszélek elsimítása', 1], ['Ellenőrzés: minden eltávolítva?', 2], ['A fogzacskó-maradvány eltávolítása – gyakran a 2. őrlőfog distalis septumán', 3], ['Bennhagyva: cysta, tumor veszélye', 5]],
+  draw(s) {
+    const smooth = A(s, 1, .5, .95);
+    const jag = (x0, x1, y) => { const o = []; for (let x = x0; x <= x1; x += 10) o.push([x, y + (((x / 10) | 0) % 2 ? -14 : 6) * (1 - smooth)]); return o; };
+    const sock = tSpec({ x: 575, y: 410, rl: 175 });
+    const fol = A(s, 4, .5, .95);
+    side(s, {
+      top: [[0, 384], [300, 386], [468, 392], ...jag(478, 500, 396), [505, 400], [650, 400], ...jag(652, 680, 396), [700, 380], [760, 300], [880, 210], [1050, 120], [1220, 70]],
+      teeth: [tSpec({ x: 175, y: 372, w: 156 }), tSpec({ x: 390, y: 372, rl: 180 })], ging: 468,
+      mask: G => { toothShape(G, sock, true); G.beginPath(); G.rect(500, 300, 152, 110); G.fill(); },
+      over: g => {
+        // öblítés
+        const ir = vis(s, 1, 2) * (1 - A(s, 1, .55, .7));
+        if (ir > 0) {
+          g.save(); g.globalAlpha = ir; syringe(g, 600, 250, 0, .9);
+          const r = rng(5);
+          for (let i = 0; i < 40; i++) { const ph = (s.t * 1.8 + r()) % 1; g.fillStyle = 'rgba(70,150,220,.7)'; g.beginPath(); g.arc(600 + (r() - .5) * 16, 250 + ph * 300, 4, 0, 7); g.fill(); }
+          g.save(); g.beginPath(); g.rect(470, 300, 220, 400); g.clip(); g.globalAlpha *= .35; toothXf(g, sock, null); g.fillStyle = '#5aaae6'; g.fill(rootPath(sock.w, sock.rl, 'two')); g.restore();
+          g.restore();
+          tag(g, 'fiziológiás sóoldat', 860, 250, { a: ir, to: [610, 300], fs: 23, border: '#5aaae6' });
+        }
+        const sm = vis(s, 1, 2) * A(s, 1, .5, .6);
+        if (sm > 0 && smooth < 1) { const x = lerp(480, 690, (s.t * .6) % 1); contraAngle(g, x, 392 + Math.sin(s.t * 60), .2, 'round', .8); }
+        tag(g, 'éles csontszélek elsimítása', 860, 330, { a: vis(s, 1, 2) * A(s, 1, .5, .6), to: [670, 392], fs: 23 });
+        // ellenőrzés
+        const ch = vis(s, 2, 3);
+        if (ch > 0) {
+          g.save(); g.globalAlpha = ch; g.strokeStyle = COL.teal; g.lineWidth = 8;
+          const x = 575 + Math.sin(s.t * 2) * 50, y = 470 + Math.cos(s.t * 2) * 40;
+          g.beginPath(); g.arc(x, y, 60, 0, 7); g.stroke(); g.beginPath(); g.moveTo(x + 42, y + 42); g.lineTo(x + 100, y + 100); g.lineWidth = 14; g.stroke(); g.restore();
+          checkBadge(g, 900, 330, ch * A(s, 2, .5, .7));
+        }
+        // fogzacskó
+        const fa = 1 - fol;
+        if (fa > 0) {
+          g.save(); g.globalAlpha = fa; g.translate(fol * 120, -fol * 200);
+          const r = rng(9); const pts = []; for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2; const rr = 24 + r() * 12; pts.push([492 + Math.cos(a) * rr * .8, 420 + Math.sin(a) * rr * 1.3]); }
+          g.beginPath(); poly(g, catmull([...pts, pts[0]], 4)); g.fillStyle = 'rgba(250,215,215,.95)'; g.fill(); g.strokeStyle = '#c2727a'; g.lineWidth = 2.5; g.stroke();
+          g.restore();
+          if (s.ci === 3 || s.ci === 4) { pulse(g, 492, 420, s.t, '#e36414', 20); }
+        }
+        if (s.ci === 4 && fol > 0 && fol < 1) { forceps(g, 492 + fol * 120, 410 - fol * 200, .35, 1, .05 + .08 * (1 - fol)); }
+        tag(g, 'fogzacskó-maradvány', 160, 200, { a: vis(s, 3, 5) * (1 - fol), to: [492, 410], fs: 23, border: '#e36414' });
+        tag(g, 'a 2. őrlőfog distalis septuma', 160, 600, { a: fin(s, 4) * (1 - fin(s, 5)), to: [488, 430], fs: 23 });
+        const wa = fin(s, 5);
+        if (wa > 0) { warnBadge(g, 860, 230, wa, 1.3); tag(g, 'bennhagyva: cysta, esetleg tumor', 900, 230, { a: wa, fs: 26, bold: true, color: '#fff', bg: '#d1495b' }); }
+      }
+    });
+  }
+});
+
+/* ---- 16. Varrás ---- */
+scene({
+  chap: '6.1.8', title: 'Sebzárás – öltéstechnika',
+  caps: ['Műtét után a seb teljes zárása csak nem fertőzött esetben, egyszerű műtéteknél javasolt – 6.18. ábra.',
+    'A sulcusban ejtett, segédmetszés nélküli lebeny esetében először az első és második őrlő közötti papillát rögzítjük…',
+    '…lingualisan visszaöltött csomós öltéssel – 6.19. ábra.',
+    'Ezt követően a lebeny distalis részét matracöltéssel egyesítjük…',
+    '…elkerülve ezzel a túl feszes zárást – 6.20. ábra.'],
+  bullets: [['Teljes zárás: csak nem fertőzött, egyszerű esetben', 0], ['1. A papilla (1.–2. őrlő között) rögzítése', 1], ['Lingualisan visszaöltött csomós öltés', 2], ['2. Distalis rész: matracöltés', 3], ['Nem túl feszes zárás!', 4]],
+  draw(s) {
+    const g = ctx;
+    occBase(g, { m3: false });
+    strokePts(g, ENV_BASE, 'rgba(160,30,45,.75)', 3);
+    occLabels(g, vis(s, 0, 1), { m3: false, vest: false });
+    const th = '#1d2b5c';
+    // papilla öltés
+    const B = [446, 506], C = [446, 400], Lp = [446, 300];
+    const pth = [B, C, Lp, [456, 296], [460, 400], [456, 508]];
+    const p1 = A(s, 1, .3, 1) * .5 + A(s, 2, .05, .7) * .5;
+    if (p1 > 0) {
+      const q = partial(pth, p1);
+      strokePts(g, q, 'rgba(255,255,255,.6)', 8); strokePts(g, q, th, 4);
+      const h = q[q.length - 1]; if (p1 < 1) { g.save(); g.strokeStyle = '#9aa5ab'; g.lineWidth = 5; g.beginPath(); g.arc(h[0], h[1] - 18, 18, -.5, Math.PI + .5); g.stroke(); g.restore(); }
+      if (A(s, 2, .7, .9) > 0) { g.save(); g.globalAlpha = A(s, 2, .7, .9); g.fillStyle = th; g.beginPath(); g.ellipse(452, 520, 12, 8, 0, 0, 7); g.fill(); strokePts(g, [[452, 520], [430, 548]], th, 3); strokePts(g, [[452, 520], [474, 550]], th, 3); g.restore(); }
+    }
+    tag(g, 'papilla (1.–2. őrlő között)', 250, 650, { a: vis(s, 1, 3), to: [446, 495], fs: 22, align: 'c' });
+    tag(g, 'lingualisan visszaöltve', 330, 220, { a: vis(s, 2, 3), to: [450, 298], fs: 22, align: 'c' });
+    // matracöltés
+    const mx0 = 800, mx1 = 900, yb = 425, yl = 318;
+    const mat = [[mx0, yb], [mx0, yl], [mx1, yl], [mx1, yb], [mx0 + 6, yb + 4]];
+    const p2 = A(s, 3, .15, .95);
+    if (p2 > 0) {
+      const q = partial(mat, p2);
+      for (let i = 1; i < q.length; i++) {
+        const seg = [q[i - 1], q[i]]; const under = (i === 1 || i === 3);
+        strokePts(g, seg, under ? 'rgba(29,43,92,.45)' : 'rgba(255,255,255,.6)', under ? 4 : 8, under ? [8, 8] : null);
+        if (!under) strokePts(g, seg, th, 4);
+      }
+      if (p2 >= 1) { g.fillStyle = th; g.beginPath(); g.ellipse(mx0 + 3, yb + 8, 12, 8, 0, 0, 7); g.fill(); }
+    }
+    tag(g, 'matracöltés a distalis részen', 900, 560, { a: fin(s, 3), to: [826, 410], fs: 23, align: 'c' });
+    const fa = fin(s, 4);
+    if (fa > 0) { tag(g, 'nem túl feszes zárás', 880, 200, { a: fa, fs: 26, bold: true, border: '#2a9d55', align: 'c' }); checkBadge(g, 1060, 200, fa); }
+    // fertőzött?
+    const ia = vis(s, 0, 1);
+    if (ia > 0) {
+      g.save(); g.globalAlpha = ia; g.fillStyle = 'rgba(255,255,255,.95)'; g.beginPath(); g.roundRect(700, 30, 490, 150, 16); g.fill();
+      checkBadge(g, 740, 75, 1, true, .8); text(g, 'nem fertőzött, egyszerű műtét → zárás', 772, 75, { fs: 22, w: 600 });
+      checkBadge(g, 740, 135, 1, false, .8); text(g, 'fertőzött seb → nem zárjuk teljesen', 772, 135, { fs: 22, w: 600 });
+      g.restore();
+    }
+  }
+});
+
+/* ---- 17. Összefoglalás ---- */
+scene({
+  chap: '', title: 'Összefoglalás',
+  caps: ['Összefoglalva: megfelelő lebeny és kíméletes csonteltávolítás után a fogat átgondolt disszekcióval távolítjuk el.',
+    'Az emelőt kontrolláltan, a gyökerek alakjához és helyzetéhez igazítva használjuk.',
+    'Végül alapos sebrevízió és nem túl feszes sebzárás következik.',
+    'Mindvégig védjük a n. lingualist, a szomszédos második őrlőfogat és a lágyrészeket.'],
+  bullets: [['n. lingualis védelme', 3], ['A 2. őrlőfog kímélése', 3], ['Kíméletes lágyrész-eltartás', 3], ['Állandó hűtés', 3]],
+  tail: 2.5,
+  draw(s) {
+    const g = ctx;
+    g.fillStyle = '#fbf6f1'; g.fillRect(0, 0, SW, SH);
+    const steps = [['Lebeny', 'mucoperiostealis, teljes vastagságú', 0], ['Csonteltávolítás', 'gömb- és fissurafúró', 0], ['Disszekció', 'a fog megfelelő részén, hűtéssel', 0], ['Emelés', 'Barry, Lecluse – a gyökérhez igazítva', 1], ['Sebrevízió', 'öblítés, csontszélek, fogzacskó', 2], ['Sebzárás', 'papilla + matracöltés', 2]];
+    steps.forEach(([t, d, ci], i) => {
+      const a = A(s, ci, (i % 3) * .15, (i % 3) * .15 + .3); if (a <= 0) return;
+      const x = 40 + (i % 3) * 385, y = 60 + Math.floor(i / 3) * 330;
+      g.save(); g.globalAlpha = a; g.translate(0, (1 - a) * 30);
+      g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.14)'; g.shadowBlur = 16; g.beginPath(); g.roundRect(x, y, 360, 290, 20); g.fill(); g.shadowColor = 'transparent';
+      g.fillStyle = COL.teal; g.beginPath(); g.arc(x + 70, y + 80, 44, 0, 7); g.fill();
+      text(g, String(i + 1), x + 70, y + 82, { fs: 44, w: 800, color: '#fff', align: 'center' });
+      text(g, t, x + 30, y + 170, { fs: 34, w: 800 });
+      text(g, d, x + 30, y + 220, { fs: 23, w: 500, maxW: 300, color: '#455a64' });
+      g.restore();
+    });
+    const fa = fin(s, 3, .8);
+    if (fa > 0) {
+      g.save(); g.globalAlpha = fa;
+      text(g, 'Sémás, oktatási célú animáció – a tankönyvi leírás (6.1 fejezet) alapján.', SW / 2, SH - 40, { fs: 21, w: 500, align: 'center', color: '#5a6c74' });
+      g.restore();
+    }
+  }
+});
+
+/* =====================================================================
+   IDŐZÍTÉS, KERET, FELIRAT
+   ===================================================================== */
+const capDur = t => Math.max(3.6, t.length / 14 + 1.4);
+let TOTAL = 0;
+for (const sc of SCENES) {
+  sc.cd = sc.caps.map(capDur); sc.cs = []; let t = .6;
+  for (const d of sc.cd) { sc.cs.push(t); t += d; }
+  sc.T = t + (sc.tail || .8); sc.start = TOTAL; TOTAL += sc.T;
+}
+window.TOTAL = TOTAL;
+window.CAPTIONS = () => {
+  const out = [];
+  for (const sc of SCENES) sc.caps.forEach((c, i) => {
+    const st = sc.start + sc.cs[i];
+    const en = i + 1 < sc.caps.length ? sc.start + sc.cs[i + 1] : sc.start + sc.T;
+    out.push({ start: st, end: en - .05, text: c });
+  });
+  return out;
+};
+window.CHAPTERS = () => SCENES.map(sc => ({ start: sc.start, title: (sc.chap ? sc.chap + ' ' : '') + (sc.title || 'Cím') }));
+
+function drawFrameChrome(sc, s) {
+  const g = ctx;
+  g.fillStyle = '#e9e4dd'; g.fillRect(0, 0, W, H);
+  // fejléc
+  g.fillStyle = '#12343b'; g.fillRect(0, 0, W, 100);
+  if (sc.chap) {
+    g.font = `800 28px ${FONT}`; const w = g.measureText(sc.chap).width + 30;
+    g.fillStyle = COL.hl; g.beginPath(); g.roundRect(40, 30, w, 44, 10); g.fill();
+    text(g, sc.chap, 40 + w / 2, 53, { fs: 28, w: 800, align: 'center', color: '#12343b' });
+    text(g, sc.title, 60 + w, 53, { fs: 38, w: 700, color: '#fff' });
+  } else text(g, sc.title, 40, 53, { fs: 38, w: 700, color: '#fff' });
+  text(g, 'Alsó bölcsességfogak műtéti eltávolítása', W - 40, 53, { fs: 22, w: 500, color: '#9cc9cf', align: 'right' });
+  // haladásjelző
+  const gt = sc.start + s.t;
+  g.fillStyle = '#0b2227'; g.fillRect(0, 100, W, 8);
+  g.fillStyle = '#3fb0c0'; g.fillRect(0, 100, W * gt / TOTAL, 8);
+  g.fillStyle = 'rgba(255,255,255,.5)'; for (const c of SCENES) g.fillRect(W * c.start / TOTAL, 100, 2, 8);
+}
+function drawPanel(sc, s) {
+  const g = ctx;
+  g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.12)'; g.shadowBlur = 16; g.beginPath(); g.roundRect(PX, PY, PW, PH, 18); g.fill(); g.shadowColor = 'transparent';
+  text(g, 'Kulcspontok', PX + 32, PY + 48, { fs: 32, w: 800, color: COL.teal });
+  g.fillStyle = COL.hl; g.fillRect(PX + 32, PY + 76, 90, 6);
+  let y = PY + 130;
+  const bl = sc.bullets || [];
+  let lastShown = -1; bl.forEach(([, ci], i) => { if (s.ci >= ci && s.t >= sc.cs[ci]) lastShown = i; });
+  bl.forEach(([t, ci], i) => {
+    const a = fin(s, ci, .6); if (a <= 0) return;
+    g.save(); g.globalAlpha = a; g.translate((1 - a) * 20, 0);
+    g.font = `600 27px ${FONT}`;
+    const lines = wrap(g, t, PW - 100); const h = lines.length * 36;
+    const cur = bl.filter(b => b[1] === s.ci).length && ci === s.ci;
+    if (cur) { g.fillStyle = 'rgba(255,224,102,.6)'; g.beginPath(); g.roundRect(PX + 18, y - 26, PW - 36, h + 18, 10); g.fill(); }
+    g.fillStyle = COL.teal; g.beginPath(); g.arc(PX + 42, y - 4, 8, 0, 7); g.fill();
+    g.fillStyle = COL.ink; g.textBaseline = 'middle';
+    lines.forEach((l, k) => g.fillText(l, PX + 64, y - 4 + k * 36));
+    g.restore();
+    y += h + 30;
+  });
+}
+function drawSubtitle(sc, s) {
+  const g = ctx;
+  const ci = s.ci; if (ci < 0) return;
+  const txt = sc.caps[ci];
+  const a = clamp((s.t - sc.cs[ci]) / .2);
+  g.fillStyle = 'rgba(8,18,22,.94)'; g.fillRect(0, 906, W, 174);
+  g.save(); g.globalAlpha = a;
+  g.font = `600 40px ${FONT}`;
+  const lines = wrap(g, txt, 1760);
+  const lh = 54, y0 = 993 - (lines.length - 1) * lh / 2;
+  g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  lines.forEach((l, i) => g.fillText(l, W / 2, y0 + i * lh));
+  g.restore();
+}
+function renderAt(gt) {
+  gt = clamp(gt, 0, TOTAL - 1e-3);
+  let sc = SCENES[0];
+  for (const c of SCENES) if (gt >= c.start) sc = c;
+  const t = gt - sc.start;
+  let ci = -1; sc.cs.forEach((st, i) => { if (t >= st) ci = i; });
+  const s = { t, T: sc.T, cs: sc.cs, cd: sc.cd, n: sc.caps.length, ci };
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (sc.full) {
+    sc.draw(s);
+  } else {
+    drawFrameChrome(sc, s);
+    ctx.save(); ctx.translate(SX, SY);
+    ctx.beginPath(); ctx.roundRect(0, 0, SW, SH, 18); ctx.clip();
+    sc.draw(s);
+    ctx.restore();
+    ctx.save(); ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(SX, SY, SW, SH, 18); ctx.stroke(); ctx.restore();
+    drawPanel(sc, s);
+  }
+  // átmenet
+  const fi = clamp(t / .5), fo = clamp((sc.T - t) / .4);
+  const fade = 1 - Math.min(fi, fo);
+  if (fade > 0) { ctx.fillStyle = `rgba(233,228,221,${fade})`; ctx.fillRect(0, 0, W, 906); }
+  drawSubtitle(sc, s);
+  ctx.restore();
+}
+window.renderAt = renderAt;
+
+window.READY = (async () => {
+  try { await document.fonts.load(`600 40px Inter`); await document.fonts.load(`800 40px Inter`); await document.fonts.load(`700 40px Inter`); } catch (e) { }
+  initPatterns();
+  renderAt(0);
+  if (!location.search.includes('render')) {
+    const t0 = performance.now(); const m = location.hash.match(/t=([\d.]+)/); const off = m ? +m[1] : 0;
+    const loop = () => { renderAt(((performance.now() - t0) / 1000 + off) % TOTAL); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
+  return true;
+})();
+</script>
+</body>
+</html>

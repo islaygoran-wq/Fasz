@@ -1,0 +1,6 @@
+video/out/prev_*
+video/out/sheet_*
+video/out/seg*.mp4
+video/out/list.txt
+video/out/render.log
+node_modules/
