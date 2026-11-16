@@ -10,6 +10,7 @@
 </head>
 <body>
 <canvas id="c" width="1920" height="1080"></canvas>
+<script src="narration_timing.js"></script>
 <script>
 "use strict";
 /* =====================================================================
@@ -1563,21 +1564,26 @@ scene({
 /* =====================================================================
    IDŐZÍTÉS, KERET, FELIRAT
    ===================================================================== */
-const capDur = t => Math.max(3.6, t.length / 14 + 1.4);
+// felirat időtartama: olvasási idő, illetve ha van felolvasás, annak hossza + szünet
+const capDur = (t, si, ci) => {
+  const nd = window.NARR_DUR && window.NARR_DUR[si] ? window.NARR_DUR[si][ci] : 0;
+  return Math.max(3.6, t.length / 14 + 1.4, nd ? nd + 0.75 : 0);
+};
 let TOTAL = 0;
-for (const sc of SCENES) {
-  sc.cd = sc.caps.map(capDur); sc.cs = []; let t = .6;
+SCENES.forEach((sc, si) => {
+  sc.cd = sc.caps.map((c, ci) => capDur(c, si, ci)); sc.cs = []; let t = .6;
   for (const d of sc.cd) { sc.cs.push(t); t += d; }
   sc.T = t + (sc.tail || .8); sc.start = TOTAL; TOTAL += sc.T;
-}
+});
 window.TOTAL = TOTAL;
+window.CAPTEXTS = () => SCENES.map(sc => sc.caps);
 window.CAPTIONS = () => {
   const out = [];
-  for (const sc of SCENES) sc.caps.forEach((c, i) => {
+  SCENES.forEach((sc, si) => sc.caps.forEach((c, i) => {
     const st = sc.start + sc.cs[i];
     const en = i + 1 < sc.caps.length ? sc.start + sc.cs[i + 1] : sc.start + sc.T;
-    out.push({ start: st, end: en - .05, text: c });
-  });
+    out.push({ start: st, end: en - .05, text: c, si, ci: i });
+  }));
   return out;
 };
 window.CHAPTERS = () => SCENES.map(sc => ({ start: sc.start, title: (sc.chap ? sc.chap + ' ' : '') + (sc.title || 'Cím') }));

@@ -1,0 +1,86 @@
+[0.0] Alsó bölcsességfogak műtéti eltávolítása, animált oktatóvideó.
+[0.1] A lépések: lebenyképzés, csonteltávolítás, disszekció, a fog eltávolítása és a sebzárás.
+[1.0] Az alsó bölcsességfog műtéti eltávolításánál teljes vastagságú, mukoperioszteális lebenyt képzünk.
+[1.1] A lebeny a nyálkahártyát és a csonthártyát együtt tartalmazza, közvetlenül a csont felszínéről emeljük le.
+[1.2] Alapvetően két lebenytípust különböztetünk meg: segédmetszés nélkül és segédmetszéssel készített műtéti lebenyeket.
+[1.3] A megfelelő lebennyel szemben támasztott követelmények: a műtéti terület átláthatósága, a csontfúrás biztonsága,
+[1.4] a könnyű eltarthatóság a sebkampó segítségével,
+[1.5] valamint a sebszélek szoros egyesítésének lehetősége, a szomszédos fogak parodontiumának kímélésével.
+[2.0] Segédmetszés nélküli, a szulkuszban vezetett (envelop) lebeny.
+[2.1] A metszésvonal a trigónum retromoláre felett, a rámusz szélénél kezdődik.
+[2.2] Meziális irányban a trigónum lingvális egyharmadánál halad, a második moláris disztális felszínének lingvális egyharmadáig.
+[2.3] Az ezt követő gingivális metszés bukkális irányban megkerüli a második moláris disztális felszínét,
+[2.4] majd az első őrlőfog disztális papillájáig folytatódik.
+[2.5] Szükség esetén kiterjeszthető az első őrlőfog meziális papillájáig.
+[3.0] A csonthártya-nyálkahártya lebeny bukkális irányú leválasztásakor,
+[3.1] a legtöbb nehézséget a trigónum retromoláre feletti vastag, fibrotikus nyálkahártya okozza.
+[3.2] A lebeny preparálásánál a rászpatórium mellett gyakran olló és szike használatára is kényszerülünk.
+[3.3] Lingválisan óvatosan, a csont felszínén haladva dolgozunk: leginkább hajlított Lúkász-kanállal; a kisméretű, hajlított végű rászpatórium is jó eszköz.
+[3.4] Az óvatos preparálásra a nervusz lingvális sérülésének elkerülése miatt van szükség.
+[3.5] Az ideg általában a trigónum mediális oldalánál, két-három milliméterrel mélyebben, közvetlenül a nyálkahártya alatt fut.
+[4.0] A leírt lebenyképzés előnye, hogy a gingivát könnyebben lehet az eredeti helyére visszailleszteni,
+[4.1] így ritkábban fordul elő a nyálkahártya visszahúzódása a második őrlőfog gyökerénél.
+[4.2] Hátránya, hogy második és harmadik nehézségi fokozatú esetekben nem nyújt elegendő teret a csont és a fog eltávolításához.
+[4.3] A sebkampóval történő lebenyeltartás gyakran a gingiva beszakadását eredményezheti.
+[4.4] Gyakorlati tapasztalat, hogy a pontos illesztés, szoros sebzárás esetén a műtétet nagyobb mértékű ödéma követheti.
+[4.5] Ezért a csak gingivális metszéssel kiegészített lebenytípust csak könnyebb eseteknél alkalmazzuk.
+[5.0] Teljes feltárást a segédmetszéssel készített lebeny biztosít.
+[5.1] A lebeny a második őrlőfogtól disztálisan hasonló az előzőekben leírtakhoz.
+[5.2] Ezt a fog disztális papillájától előrefelé, hozzávetőlegesen negyvenöt fokban, az áthajlás irányában vezetett segédmetszéssel egészítjük ki.
+[5.3] A segédmetszés nem hosszabb tizenöt-húsz milliméternél: hosszú metszésnél az artéria maxilláris exszterna kis ágaiból vérzést kaphatunk.
+[5.4] Ha a bölcsességfog helyzete a második moláris eltávolítását is szükségessé teheti, a segédmetszést az első őrlőfog disztális papillájától vezetjük.
+[5.5] A megfelelően kialakított lebeny könnyű hozzáférést biztosít, a sebkampót óvatosan lehet használni, esetenként el is lehet hagyni.
+[5.6] A gyakorlati tapasztalatok szerint a posztoperatív ödémáért elsősorban az erőszakos lágyrész-eltartás okozta szövetroncsolás a felelős.
+[6.0] A bölcsességfogak sebészetében az utóbbi években a vésők használatát fokozatosan felváltja a sebészi fúrók alkalmazása.
+[6.1] Az autoklávozható sebészi kézidarabok, a sebészi mikromotor,
+[6.2] valamint a kemény acélból készült gömb- és fisszúrafúrók a csontsebészet elengedhetetlen kellékei.
+[6.3] A vésőt, mint kiegészítő eszközt, általában csak a fogak disszekciójával használjuk.
+[6.4] A csonteltávolítás technikája az eltávolítandó csont mennyiségétől és a foghoz való viszonyától függ.
+[7.0] Mély impakciónál, ha a fog csonttal teljesen fedett, ajánlatos a csonton gömbfúróval perforációkat készíteni.
+[7.1] Amikor a fúró eléri a fog koronáját, azt jól érezhető ellenállás jelzi.
+[7.2] A fogat fedő csontot perforációkkal körbefúrjuk,
+[7.3] a nyílásokat akár vésővel is összeköthetjük, és így eltávolítjuk a csontlemezt.
+[8.0] A fog koronájának felszabadításakor a fog körül gömbfúróval először széles árkot készítünk,
+[8.1] majd a korona mellett haladva fisszúrafúróval mélyítjük azt.
+[8.2] A koronát a zománc-cement határig szabaddá kell tenni.
+[8.3] A gyökerek esetében is hasonló technikát alkalmazunk.
+[9.0] Az alsó bölcsességfogakat alakjuk és anatómiai helyzetük miatt ritkán tudjuk egészben eltávolítani.
+[9.1] A műtét során általában szükség van a korona, a gyökerek elvágására, szétválasztására.
+[9.2] Régebben az emelők erőszakos használata gyakran komoly szövődményeket okozott: az ép második moláris elvesztését, vagy akár az állkapocs törését.
+[9.3] Az alsó bölcsességfog eltávolításának művészete, a minimálisan traumatizáló műtét titka a fog megfelelő részén végzett disszekcióban rejlik.
+[9.4] A disszekciót általában gyorsító áttétellel ellátott sebészi könyökdarabbal, gyémántbevonatú vagy keményacél kúpos fisszúrafúróval végezzük.
+[9.5] Gondosan ügyelünk az állandó hűtésre és a művelet során keletkező fogtörmelék elszívására. A vésőt kiegészítő eszközként alkalmazhatjuk.
+[10.0] A fog koronáját négyötöd részben fúróval átvágjuk,
+[10.1] majd vésővel, kis kalapácsütéssel szétrepesztjük.
+[10.2] Ezt különösen a fog lingvális részének átvágásánál ajánljuk.
+[10.3] A fúró túlvezetésével ugyanis a vékony lingvális csontlemez átvágása után megsérthetjük a nervusz lingválist.
+[10.4] Ezt elkerülhetjük, ha a lingvális nyálkahártya alá, szorosan a csonthoz tapasztva, rászpatóriummal védjük a lágyrészeket.
+[11.0] A vertikális helyzetű fog eltávolításának menetét a már említett nehézségi fokozatok határozzák meg.
+[11.1] A fog koronáját a bukkális oldalon, a zománc-cement határig szabaddá tesszük.
+[11.2] Vigyáznunk kell a csont eltávolításánál, mert a vertikális helyzetű fog általában nagy felületen, szoros kapcsolatban lehet a második őrlőfoggal.
+[11.3] A csont eltávolítását, ha ezt az anatómiai helyzet, a rámusz viszonya engedi, a disztális felszín mentén is folytathatjuk.
+[12.0] Ha a fognak kúpos, összetartó gyökerei vannak, a zománc-cement határon a koronába gömbfúróval lyukat fúrunk.
+[12.1] Ez lesz az emelő applikációs, más néven retenciós pontja.
+[12.2] Ide helyezhetjük a karom formájú emelőt úgy, hogy az emelő működő része a csontszélen támaszkodjon.
+[12.3] A vertikális irányú emelés sikeresen megmozdíthatja vagy el is távolíthatja a fogat.
+[13.0] Ha a fognak egyirányban, disztálisan hajlott gyökerei vannak, a korona meziális részén, a második molárison támaszkodó Leklüz-típusú emelőt használhatjuk.
+[13.1] Ennek feltétele a korona disztális részének kiszabadítása.
+[13.2] Ha ez túl nagy csonteltávolítással járna, akkor a korona disztális csücskét disszekáljuk.
+[13.3] Ezután az emelővel a fog a gyökerek görbületének irányában, disztálisan kifordítható.
+[14.0] Ha a fognak különálló gyökerei vannak, a gyökerek szétválasztásával is segíthetjük a fog eltávolítását.
+[14.1] A gyökereket külön-külön, lehetőleg a görbületük íve mentén kifejtett erőhatással, emelővel távolítjuk el.
+[15.0] A bölcsességfog eltávolítása után alapos sebrevíziót végzünk.
+[15.1] Fiziológiás sóoldattal átöblítjük a csontüreget, az éles csontszéleket elsimítjuk,
+[15.2] és meggyőződünk róla, hogy a sebből mindent eltávolítottunk.
+[15.3] Külön figyelmet fordítunk a fogzacskó maradványának eltávolítására.
+[15.4] Ezt a hámszövet-maradványt a bölcsességfog nyaki részén találjuk; sokszor a második őrlőfog disztális szeptumához tapad.
+[15.5] Bennhagyása ciszta, esetleg tumor kialakulásához vezethet.
+[16.0] Műtét után a seb teljes zárása csak nem fertőzött esetben, egyszerű műtéteknél javasolt.
+[16.1] A szulkuszban ejtett, segédmetszés nélküli lebeny esetében először az első és második őrlő közötti papillát rögzítjük,
+[16.2] lingválisan visszaöltött csomós öltéssel.
+[16.3] Ezt követően a lebeny disztális részét matracöltéssel egyesítjük,
+[16.4] elkerülve ezzel a túl feszes zárást.
+[17.0] Összefoglalva: megfelelő lebeny és kíméletes csonteltávolítás után a fogat átgondolt disszekcióval távolítjuk el.
+[17.1] Az emelőt kontrolláltan, a gyökerek alakjához és helyzetéhez igazítva használjuk.
+[17.2] Végül alapos sebrevízió és nem túl feszes sebzárás következik.
+[17.3] Mindvégig védjük a nervusz lingválist, a szomszédos második őrlőfogat és a lágyrészeket.

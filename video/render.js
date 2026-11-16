@@ -52,6 +52,7 @@ async function renderSegment(browser, f0, f1, file) {
   const mode = process.argv[2] || 'video';
   const browser = await chromium.launch();
   const page = await openPage(browser);
+  if (mode === 'texts') { console.log(JSON.stringify(await page.evaluate(() => window.CAPTEXTS()))); await browser.close(); return; }
   const total = await page.evaluate(() => window.TOTAL);
   console.log('Teljes hossz:', total.toFixed(1), 's');
   // gyors hibakeresés: minden 0,2 s-ban kirajzol egy képkockát
@@ -70,6 +71,8 @@ async function renderSegment(browser, f0, f1, file) {
     console.log(JSON.stringify(caps.map(c => [c.start.toFixed(1), c.end.toFixed(1)])));
   } else {
     console.log('Feliratok:', await writeSrt(page));
+    const items = await page.evaluate(() => window.CAPTIONS());
+    fs.writeFileSync(path.join(OUT, 'captions.json'), JSON.stringify({ total, items }));
     const N = Math.ceil(total * FPS), K = Number(process.env.WORKERS || 4);
     const per = Math.ceil(N / K), segs = [];
     for (let k = 0; k < K; k++) segs.push([k * per, Math.min(N, (k + 1) * per), path.join(OUT, `seg${k}.mp4`)]);
@@ -84,6 +87,13 @@ async function renderSegment(browser, f0, f1, file) {
       p.on('close', c => c === 0 ? res() : rej(new Error('concat ' + c)));
     });
     segs.forEach(s => fs.unlinkSync(s[2])); fs.unlinkSync(path.join(OUT, 'list.txt'));
+    // felolvasás hozzáadása, ha a hangfájlok elkészültek (narrate.py synth)
+    if (fs.existsSync(path.join(OUT, 'clips'))) {
+      await new Promise((res, rej) => {
+        const p = spawn('python3', [path.join(__dirname, 'narrate.py'), 'mix'], { stdio: 'inherit' });
+        p.on('close', c => c === 0 ? res() : rej(new Error('narrate mix ' + c)));
+      });
+    }
     console.log('Kész:', final, ((Date.now() - t0) / 1000).toFixed(0), 's');
   }
   await browser.close();
